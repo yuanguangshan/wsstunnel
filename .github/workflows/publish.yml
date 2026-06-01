@@ -3,12 +3,15 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - "v*"  # v0.3.0, v0.4.0, ...
+      - "v*"
 
 jobs:
   build-and-publish:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # 用于 Trusted Publishing (OIDC)
+    environment: pypi_api_token
 
     steps:
       - name: Checkout
@@ -22,13 +25,12 @@ jobs:
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build twine
+          python -m pip install build
 
       - name: Build package
         run: python -m build
 
       - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
