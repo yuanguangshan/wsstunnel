@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ws-tunnel"
+name = "wsstunnel"
 version = "0.2.0"
 description = "WebSocket reverse shell relay with HTTP proxy support"
 authors = [{name = "yuanguangshan"}]

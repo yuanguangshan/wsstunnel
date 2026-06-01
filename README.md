@@ -202,7 +202,7 @@ ws-tunnel client --server ws://your-vps:8080
 ```bash
 # ── VPS 端 ──
 # 1. 安装 ws-tunnel
-pip install ws-tunnel
+pip install wsstunnel
 
 # 2. 用 Let's Encrypt 申请证书
 sudo apt install certbot nginx
