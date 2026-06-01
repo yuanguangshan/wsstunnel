@@ -194,6 +194,15 @@ def _run_pty_mode(ws, shell, reconnect_event):
     )
     os.close(slave_fd)
 
+    # 禁用 PTY 回显，避免前端（文本模式）看到双重输入
+    # TUI 程序（vim/top 等）会自行设置终端模式，不受影响
+    try:
+        mode = termios.tcgetattr(master_fd)
+        mode[3] &= ~termios.ECHO  # 清除 ECHO 标志
+        termios.tcsetattr(master_fd, termios.TCSANOW, mode)
+    except OSError:
+        pass
+
     # PTY 输出读取线程
     def read_pty_output():
         """从 PTY master 读取输出，以二进制帧发送到 WebSocket"""
