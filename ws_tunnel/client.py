@@ -181,7 +181,8 @@ def _run_pty_mode(ws, shell, reconnect_event):
     try:
         cols, rows = os.get_terminal_size()
     except OSError:
-        rows, cols = 24, 80
+        # 容器内无真实终端，用较大默认值避免中文文件名换行
+        rows, cols = 50, 200
     _set_winsize(master_fd, rows, cols)
 
     shell_proc = subprocess.Popen(
