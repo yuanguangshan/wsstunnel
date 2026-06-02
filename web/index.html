@@ -11,17 +11,18 @@
   #terminal { width: 100vw; height: 100vh; padding: 8px; }
   #terminal .xterm { height: 100%; }
   #terminal .xterm-viewport { height: 100% !important; }
-  #status {
+  #top-bar {
     position: fixed; top: 0; right: 0;
-    padding: 4px 10px; font: 12px monospace;
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 8px; z-index: 10;
+  }
+  #status {
+    font: 12px monospace;
     background: #e74c3c; color: #fff;
-    border-radius: 0 0 0 4px; z-index: 10;
+    padding: 4px 10px;
+    border-radius: 4px;
   }
   #status.connected { background: #2ecc71; }
-  #backend-bar {
-    position: fixed; top: 0; left: 0;
-    padding: 4px 10px; z-index: 10;
-  }
   #backend-select {
     font: 12px/1.5 Menlo, Monaco, monospace;
     background: #16213e; color: #eee;
@@ -53,7 +54,10 @@
 </head>
 <body>
 
-<div id="status">Disconnected</div>
+<div id="top-bar">
+  <select id="backend-select" disabled><option>—</option></select>
+  <span id="status">Disconnected</span>
+</div>
 
 <!-- 连接表单 -->
 <div id="connect-form">
@@ -62,11 +66,6 @@
   <input id="token-input" type="text" placeholder="token (可选)" value="" />
   <button id="connect-btn">连接</button>
   <div id="error"></div>
-</div>
-
-<!-- 后端选择器 -->
-<div id="backend-bar" class="hidden">
-  <select id="backend-select" disabled><option>—</option></select>
 </div>
 
 <!-- 终端 -->
@@ -163,7 +162,7 @@ function handleRelayText(text) {
       }).join('');
       sel.disabled = false;
     }
-    document.getElementById('backend-bar').classList.remove('hidden');
+    document.getElementById('backend-select').style.display = '';
   }
   // 切换后端确认
   else if (text.startsWith('[Info] Switched to backend:')) {
@@ -206,13 +205,33 @@ function initTerminal() {
   // 自适应容器大小
   function fitTerminal() {
     const el = document.getElementById('terminal');
-    const renderer = term._core?._renderService;
-    if (!renderer || !renderer.dimensions) return setTimeout(fitTerminal, 50);
-    const { actualCellWidth, actualCellHeight } = renderer.dimensions;
-    if (!actualCellWidth || !actualCellHeight) return setTimeout(fitTerminal, 50);
-    const cols = Math.max(20, Math.floor((el.clientWidth - 16) / actualCellWidth));
-    const rows = Math.max(5, Math.floor((el.clientHeight - 16) / actualCellHeight));
+    if (!el.clientHeight || !el.clientWidth) return setTimeout(fitTerminal, 100);
+    // 尝试从 xterm 内部获取真实字符尺寸（最精确）
+    let cw, ch;
+    try {
+      const dims = term._core?._renderService?.dimensions;
+      if (dims?.actualCellWidth > 0 && dims?.actualCellHeight > 0) {
+        cw = dims.actualCellWidth;
+        ch = dims.actualCellHeight;
+      }
+    } catch {}
+    // 回退：从 DOM 测量实际行高
+    if (!ch) {
+      const row = el.querySelector('.xterm-rows > div');
+      if (row) {
+        ch = row.clientHeight;
+        cw = row.clientWidth / Math.max(1, term.cols);
+      }
+    }
+    // 最终回退：根据字号估算
+    if (!ch) { cw = 8.4; ch = 17; }
+    const padding = 16;
+    const cols = Math.max(20, Math.floor((el.clientWidth - padding) / cw));
+    const rows = Math.max(5, Math.floor((el.clientHeight - padding) / ch));
     term.resize(cols, rows);
+    // 强制 viewport 撑满容器（xterm 内联样式无法用 CSS 覆盖）
+    const vp = el.querySelector('.xterm-viewport');
+    if (vp) vp.style.height = el.clientHeight + 'px';
   }
   fitTerminal();
 
@@ -236,7 +255,8 @@ function initTerminal() {
   });
 }
 
-// 后端选择器切换事件
+// 后端选择器默认隐藏，收到后端列表后显示
+document.getElementById('backend-select').style.display = 'none';
 document.getElementById('backend-select').addEventListener('change', function() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send('USE ' + this.value);
