@@ -79,16 +79,9 @@ let ws = null;
 let term = null;
 let backends = [];
 
-// 从 URL 参数读取默认值，或从页面地址自动推导
+// 从 URL 参数读取默认值，无参数则留空（用户填或书签提供）
 const params = new URLSearchParams(window.location.search);
-const loc = window.location;
-if (params.get('server')) {
-  document.getElementById('server-url').value = params.get('server');
-} else {
-  // 由 relay 自身提供页面时，默认 WebSocket 地址 = 同源 + /wstunnel
-  const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-  document.getElementById('server-url').value = wsProto + '//' + loc.host + '/wstunnel';
-}
+if (params.get('server')) document.getElementById('server-url').value = params.get('server');
 if (params.get('token')) document.getElementById('token-input').value = params.get('token');
 
 function setStatus(text, connected) {
