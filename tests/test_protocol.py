@@ -2,7 +2,7 @@
 
 import pytest
 
-from ws_tunnel.relay import _parse_backend_auth, _is_frontend_auth
+from wsstunnel.relay import _parse_backend_auth, _is_frontend_auth
 
 
 # ──────────────────────────────────────────────

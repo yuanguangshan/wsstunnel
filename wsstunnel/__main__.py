@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-支持 python -m ws_tunnel 直接运行。
+支持 python -m wsstunnel 直接运行。
 """
 
 from .cli import main

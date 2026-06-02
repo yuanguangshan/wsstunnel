@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ws-tunnel = "ws_tunnel.cli:main"
+ws-tunnel = "wsstunnel.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
@@ -28,7 +28,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.setuptools.packages.find]
-include = ["ws_tunnel*"]
+include = ["wsstunnel*"]
 
 [project.urls]
 Homepage = "https://github.com/yuanguangshan/wstunnel"

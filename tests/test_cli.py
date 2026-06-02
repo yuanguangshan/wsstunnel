@@ -2,7 +2,7 @@
 
 from click.testing import CliRunner
 
-from ws_tunnel.cli import cli
+from wsstunnel.cli import cli
 
 
 class TestCLI:

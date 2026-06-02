@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ws_tunnel/client.py — WebSocket 后端客户端（容器端）
+wsstunnel/client.py — WebSocket 后端客户端（容器端）
 
 同步版本，使用 websocket-client 库以支持 HTTP 代理穿透。
 支持两种模式:

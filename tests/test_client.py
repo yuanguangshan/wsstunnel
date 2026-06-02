@@ -5,7 +5,7 @@ import signal
 
 import pytest
 
-from ws_tunnel.client import _SIGNAL_MAP, _set_winsize
+from wsstunnel.client import _SIGNAL_MAP, _set_winsize
 
 
 # ──────────────────────────────────────────────

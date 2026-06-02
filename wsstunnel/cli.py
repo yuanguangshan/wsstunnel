@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ws_tunnel/cli.py — 统一命令行入口
+wsstunnel/cli.py — 统一命令行入口
 
 通过 click 提供 relay 和 client 两个子命令。
 """

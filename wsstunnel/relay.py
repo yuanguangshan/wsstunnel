@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ws_tunnel/relay.py — WebSocket 中继服务（VPS 端）
+wsstunnel/relay.py — WebSocket 中继服务（VPS 端）
 
 支持多后端（多容器）注册，支持 PTY 二进制帧透明转发。
 

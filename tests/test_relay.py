@@ -3,7 +3,7 @@
 import asyncio
 import pytest
 
-from ws_tunnel.relay import (
+from wsstunnel.relay import (
     RelayState,
     _parse_backend_auth,
     _forward_to_frontends,
