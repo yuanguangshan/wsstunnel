@@ -184,7 +184,7 @@ ws://43.153.67.212:8080 (VPS)
 | v1 | `server.py` + curl 轮询 | HTTP 长轮询，轮询 GET/POST | 废弃 |
 | v2 | `ws_server.js` (Node.js) | Node WebSocket 服务端，无客户端 | 废弃 |
 | v3 | `ws_relay.py` + `ws_backend_sync.py` | Python 单文件脚本，单后端，无认证 | 废弃 |
-| v0.2.0 | `ws-tunnel` CLI + 包结构 | click CLI、PyPI 发布、`--token` 认证 | 历史版本 |
+| v0.2.0 | `wsstunnel` CLI + 包结构 | click CLI、PyPI 发布、`--token` 认证 | 历史版本 |
 | v0.3.0 | 同上 | `--cert`/`--key` TLS 支持、`--shell` 参数、`--verbose`/`--quiet` 日志控制 | 历史版本 |
 | v0.5.0 | 多后端路由 | `@name` 命令路由、`LIST` 列举后端、自动命名 | 历史版本 |
 | v0.6.0 | PTY 模式 | 伪终端（默认）、`--no-pty` 回退管道模式、`__SIGNAL` 信号转发 | 历史版本 |
@@ -274,7 +274,7 @@ print(ws.recv())
 
 ## 附录：完整代码
 
-> **注意**：以下代码是 v1/v2 时代的旧版本，仅保留作为历史参考。当前版本（v0.7.1+）已重写为多文件包结构，支持多后端、认证、TLS、PTY 等。源码见 `ws_tunnel/` 目录。
+> **注意**：以下代码是 v1/v2 时代的旧版本，仅保留作为历史参考。当前版本（v0.7.1+）已重写为多文件包结构，支持多后端、认证、TLS、PTY 等。源码见 `wsstunnel/` 目录。
 
 ### A. VPS 服务端 — `ws_relay.py`（旧版，单后端无认证）
 
