@@ -104,7 +104,7 @@ cd ws-tunnel
 pip install -e .
 ```
 
-安装后获得 `ws-tunnel` 命令和 `ws_tunnel` Python 包。
+安装后获得 `ws-tunnel` 命令和 `wsstunnel` Python 包。
 
 ### 仅安装依赖
 
@@ -115,7 +115,7 @@ pip install -r requirements.txt
 ### 系统依赖
 
 - Python >= 3.10
-- 中继端依赖：`websockets`，`click`
+- 中继端依赖：`websockets`，`click`，`httpx`（可选，微信推送用）
 - 客户端依赖：`websocket-client`，`click`
 
 ## 详细使用指南
@@ -149,6 +149,8 @@ ws-tunnel relay --port 8080 --token mysecret --quiet
 | `-t, --token` | — | 认证令牌，不设则不开启认证 |
 | `--cert` | — | TLS 证书路径（提供后启用 wss://） |
 | `--key` | — | TLS 私钥路径，未指定时使用 --cert |
+| `--verbose` | — | 输出 DEBUG 级别日志 |
+| `--wxpush` | — | 微信推送通知，格式 `url:key`。后端上线/下线时发送通知 |
 | `--verbose` | — | 输出 DEBUG 级别日志 |
 | `--quiet` | — | 仅输出 WARNING 及以上日志 |
 
@@ -556,17 +558,18 @@ ws.send("ls -la");
 ## 使用库 API（在 Python 代码中调用）
 
 ```python
-from ws_tunnel import run_relay, run_client
+from wsstunnel import run_relay, run_client
 
 # 启动中继（阻塞）
 run_relay("0.0.0.0", 8080, token="mysecret")
 
-# 启动中继 + TLS
+# 启动中继 + TLS + 微信通知
 run_relay(
     "0.0.0.0", 443,
     token="mysecret",
     cert_path="/path/to/cert.pem",
     key_path="/path/to/key.pem",
+    wxpush="https://wxpusher.zjiecode.com/api/send/message:your_app_token",
 )
 
 # 启动客户端
@@ -661,6 +664,31 @@ FileNotFoundError: /bin/bash
 | v0.6.2 | `USE` 命令切换默认后端、前端连接自动推送后端列表 | — |
 | v0.7.0 | URL token 认证（`?token=xxx`）、`__RESIZE`/`__SIGNAL` 控制命令 | — |
 | v0.7.1 | PTY 不再回显输入（避免双重显示）、默认终端 200x50 | — |
+| v0.8.0 | 重构 `RelayState` 类，新增 `--wxpush` 微信通知 | 新增依赖 `httpx` |
+| v0.9.0 | 包名统一为 `wsstunnel`，源目录 `ws_tunnel/` → `wsstunnel/` | `from wsstunnel import ...` |
+| v0.9.2 | 新增 `ws-tunnel --version`，添加 `[dev]` 可选依赖（pytest） | `pip install wsstunnel[dev]` 安装测试依赖 |
+
+## 开发与测试
+
+```bash
+# 安装开发依赖
+pip install -e ".[dev]"
+
+# 运行测试
+pytest
+```
+
+## 微信推送通知
+
+中继端支持通过 `--wxpush` 参数在**后端上线/下线**时发送微信通知。
+
+```bash
+# 申请 wxpusher 的 app token，然后：
+ws-tunnel relay --port 8080 --token mysecret \
+    --wxpush https://wxpusher.zjiecode.com/api/send/message:your_app_token
+```
+
+当容器连接或断开时，中继会自动向微信发送通知消息。
 
 ## 发布到 PyPI
 

@@ -2,7 +2,7 @@
 
 > **⚠️ 本文档已过时**：本文档是项目早期（v0.1.0 雏形阶段）的设计记录，包含旧版单文件脚本 `ws_relay.py` 和 `ws_backend_sync.py` 的完整代码。
 >
-> 当前版本（**v0.7.1**）已演变为标准 Python 包，新增功能包括：多后端路由、Token + TLS 认证、PTY 模式（支持 vim/top/htop）、心跳保活、指数退避重连、USE/LIST 命令路由等。
+> 当前版本（**v0.9.2**）已演变为标准 Python 包（`pip install wsstunnel`），新增功能包括：多后端路由、Token + TLS 认证、PTY 模式（支持 vim/top/htop）、心跳保活、微信推送通知、USE/LIST 命令路由等。
 >
 > 如需最新使用文档 → 请参阅 `README.md`
 > 如需深入技术分析 → 请参阅 `深度解析.md`
