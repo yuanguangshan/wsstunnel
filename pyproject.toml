@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wsstunnel"
-version = "0.12.2"
+version = "0.12.3"
 description = "WebSocket reverse shell relay with PTY support and HTTP proxy traversal"
 authors = [{name = "yuanguangshan"}]
 license = {text = "MIT"}
