@@ -138,28 +138,32 @@ def _daemonize(pidfile: str, logfile: str, verbose: bool) -> None:
     """将当前进程转为后台守护进程。"""
     pid = os.fork()
     if pid > 0:
-        # 父进程退出，子进程继续
         sys.exit(0)
 
-    # 子进程：创建新会话、关闭 stdio
     os.setsid()
     pid2 = os.fork()
     if pid2 > 0:
         sys.exit(0)
 
-    # 写 PID 文件
-    with open(pidfile, "w") as f:
-        f.write(str(os.getpid()))
-
-    # 重定向 stdio 到日志文件
-    mode = "a"
+    # PID 文件（不可写则回退到当前目录）
     try:
-        os.makedirs(os.path.dirname(logfile), exist_ok=True)
-        f = open(logfile, mode, 1)
-        os.dup2(f.fileno(), sys.stdout.fileno())
-        os.dup2(f.fileno(), sys.stderr.fileno())
-    except (OSError, PermissionError) as e:
-        print(f"Warning: cannot open log {logfile}: {e}", file=sys.stderr)
+        os.makedirs(os.path.dirname(pidfile) or ".", exist_ok=True)
+        with open(pidfile, "w") as f:
+            f.write(str(os.getpid()))
+    except (OSError, PermissionError):
+        pidfile = f"/tmp/wsstunnel-{os.getpid()}.pid"
+        with open(pidfile, "w") as f:
+            f.write(str(os.getpid()))
+
+    # 日志文件（不可写则回退到 ./wsstunnel.log）
+    try:
+        os.makedirs(os.path.dirname(logfile) or ".", exist_ok=True)
+        f = open(logfile, "a", 1)
+    except (OSError, PermissionError):
+        logfile = "wsstunnel.log"
+        f = open(logfile, "a", 1)
+    os.dup2(f.fileno(), sys.stdout.fileno())
+    os.dup2(f.fileno(), sys.stderr.fileno())
 
 
 def main() -> None:
