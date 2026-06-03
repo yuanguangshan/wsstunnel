@@ -82,7 +82,7 @@ async def _http_request_handler(connection: Any, request: Any) -> Response | Non
     # 只拦截非 WebSocket 的 HTTP GET 请求
     if request.headers.get("Upgrade", "").lower() == "websocket":
         return None
-    if request.path in ("/", "/index.html"):
+    if request.path in ("/", "/index.html", "/wstunnel"):
         headers = Headers()
         headers["Content-Type"] = "text/html; charset=utf-8"
         return Response(200, "OK", headers, _INDEX_HTML)

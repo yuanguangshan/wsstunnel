@@ -122,7 +122,14 @@ const params = new URLSearchParams(window.location.search);
 const hasUrlServer = !!params.get('server');
 const hasUrlToken = !!params.get('token');
 
-if (hasUrlServer) document.getElementById('server-url').value = params.get('server');
+if (hasUrlServer) {
+  document.getElementById('server-url').value = params.get('server');
+} else {
+  // 页面由 relay 自己提供时，自动推导 WebSocket 地址
+  const loc = window.location;
+  const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+  document.getElementById('server-url').value = wsProto + '//' + loc.host + '/wstunnel';
+}
 if (hasUrlToken) document.getElementById('token-input').value = params.get('token');
 
 if (!hasUrlServer && !hasUrlToken) {
