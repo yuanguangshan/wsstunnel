@@ -305,17 +305,7 @@ function initTerminal() {
   window.addEventListener('resize', sendResize);
   setTimeout(sendResize, 500);
 
-  // 粘贴事件：监听 textarea（xterm 实际接收输入的元素）
-  term.textarea.addEventListener('paste', (e) => {
-    e.preventDefault();
-    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
-    if (text && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(new TextEncoder().encode(text));
-    }
-  });
-
-  // 按键输入 → WebSocket 二进制帧
-  // 按键输入（含 IME 中文）→ xterm 的 onData 处理所有输入
+  // 所有输入（键盘、IME 中文、粘贴）统一通过 xterm 的 onData 处理
   term.onData((data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(new TextEncoder().encode(data));
