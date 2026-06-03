@@ -89,6 +89,17 @@
 let ws = null;
 let term = null;
 let backends = [];
+let _composing = false;
+let _mobileDup = '';
+let _mobileDupTimer = null;
+
+function mobileSend(text) {
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  _mobileDup = text;
+  clearTimeout(_mobileDupTimer);
+  _mobileDupTimer = setTimeout(() => { _mobileDup = ''; }, 300);
+  ws.send(new TextEncoder().encode(text));
+}
 
 // --- localStorage 持久化 ---
 const STORAGE_SERVER = 'wsstunnel_server';
@@ -180,7 +191,8 @@ function connect() {
       if (term) term.write(new Uint8Array(e.data));
     }
     // iOS 上 term.write 可能导致 textarea 失焦（键盘收回、IME 中断）
-    if (term && term.textarea && document.activeElement !== term.textarea) {
+    // 但合成期间不能 refocus，否则会打断移动端 IME 输入
+    if (!_composing && term && term.textarea && document.activeElement !== term.textarea) {
       term.textarea.focus();
     }
   };
@@ -306,11 +318,26 @@ function initTerminal() {
   setTimeout(sendResize, 500);
 
   // 所有输入（键盘、IME 中文、粘贴）统一通过 xterm 的 onData 处理
+  // 移动端去重：compositionend/paste 兜底可能先于 onData 发送
   term.onData((data) => {
+    if (data && data === _mobileDup) { _mobileDup = ''; return; }
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
   });
+
+  // 移动端 IME 中文输入和粘贴兜底（xterm onData 在移动端不可靠）
+  if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    term.textarea.addEventListener('compositionstart', () => { _composing = true; });
+    term.textarea.addEventListener('compositionend', (e) => {
+      _composing = false;
+      if (e.data) mobileSend(e.data);
+    });
+    term.textarea.addEventListener('paste', (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+      if (text) mobileSend(text);
+    });
+  }
 }
 
 // 后端选择器默认隐藏，收到后端列表后显示
