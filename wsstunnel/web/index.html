@@ -175,11 +175,13 @@ function connect() {
 
   ws.onmessage = (e) => {
     if (typeof e.data === 'string') {
-      // 文本帧 → relay 回复（后端列表、错误信息等）
       handleRelayText(e.data);
     } else {
-      // 二进制帧 → PTY shell 输出
       if (term) term.write(new Uint8Array(e.data));
+    }
+    // iOS 上 term.write 可能导致 textarea 失焦（键盘收回、IME 中断）
+    if (term && term.textarea && document.activeElement !== term.textarea) {
+      term.textarea.focus();
     }
   };
 
