@@ -235,99 +235,106 @@ def _run_pty_mode(
 ) -> None:
     """PTY 模式：使用伪终端，支持全屏 TUI 程序和窗口大小调整。
 
+    Shell 崩溃后自动在本连接内重生（最多 5 次），避免频繁重连。
+
     Args:
         ws: WebSocket 连接。
         shell: shell 可执行文件路径。
         reconnect_event: 重连事件。
     """
-    master_fd, slave_fd = pty.openpty()
+    max_restarts = 5
+    restart_count = 0
 
-    # 获取当前终端大小（如果可以从父进程继承）
-    try:
-        cols, rows = os.get_terminal_size()
-    except OSError:
-        # 容器内无真实终端，用较大默认值避免中文文件名换行
-        rows, cols = 50, 200
-    _set_winsize(master_fd, rows, cols)
-
-    shell_proc = subprocess.Popen(
-        [shell, "-i"],
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        close_fds=False,
-        preexec_fn=os.setsid,
-    )
-    os.close(slave_fd)
-
-    # PTY 输出读取线程
-    def read_pty_output() -> None:
-        """从 PTY master 读取输出，以二进制帧发送到 WebSocket。"""
+    while not reconnect_event.is_set() and restart_count < max_restarts:
+        master_fd, slave_fd = pty.openpty()
         try:
-            while not reconnect_event.is_set():
-                rlist, _, _ = select.select([master_fd], [], [], 0.5)
-                if rlist:
-                    try:
-                        data = os.read(master_fd, 65536)
-                        if not data:
-                            break
-                        ws.send_binary(data)
-                    except OSError:
-                        break
-        finally:
-            logger.info("PTY output thread exited")
-            reconnect_event.set()
-
-    t = threading.Thread(target=read_pty_output, daemon=True)
-    t.start()
-
-    # 主线程：接收 WebSocket 消息，写入 PTY
-    try:
-        while not reconnect_event.is_set():
-            try:
-                msg = ws.recv()
-            except websocket.WebSocketTimeoutException:
-                continue
-            if not msg:
-                break
-
-            if isinstance(msg, bytes):
-                # 二进制数据：原始按键输入，直接写入 PTY
-                os.write(master_fd, msg)
-            elif isinstance(msg, str):
-                # 文本消息
-                if msg == "__PONG__":
-                    continue
-                if msg.startswith("__RESIZE:"):
-                    # 窗口大小调整: __RESIZE:rows,cols
-                    try:
-                        _, dims = msg.split(":", 1)
-                        r, c = map(int, dims.split(","))
-                        _set_winsize(master_fd, r, c)
-                    except (ValueError, OSError) as e:
-                        logger.debug(f"Resize failed: {e}")
-                    continue
-                # 控制信号: __SIGNAL:SIGINT / __SIGNAL:SIGTERM / __SIGNAL:SIGKILL
-                if msg.startswith("__SIGNAL:"):
-                    sig_name = msg.split(":", 1)[1].strip()
-                    _send_signal(shell_proc, sig_name)
-                    continue
-                # 普通命令：加上换行符后写入 PTY
-                os.write(master_fd, (msg + "\n").encode())
-    except websocket.WebSocketConnectionClosedException:
-        logger.warning("WebSocket connection closed")
-    except websocket.WebSocketTimeoutException:
-        pass
-    except Exception as e:
-        logger.error(f"Receive error: {e}")
-    finally:
-        reconnect_event.set()
-        _terminate_process(shell_proc)
-        ws.close()
-        try:
-            os.close(master_fd)
+            cols, rows = os.get_terminal_size()
         except OSError:
+            rows, cols = 50, 200
+        _set_winsize(master_fd, rows, cols)
+        shell_proc = subprocess.Popen(
+            [shell, "-i"],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=False,
+            preexec_fn=os.setsid,
+        )
+        os.close(slave_fd)
+
+        shell_restart = threading.Event()
+
+        def read_pty_output(mfd: int, sp: subprocess.Popen, sr: threading.Event) -> None:
+            try:
+                while not sr.is_set() and not reconnect_event.is_set():
+                    rlist, _, _ = select.select([mfd], [], [], 0.5)
+                    if rlist:
+                        try:
+                            data = os.read(mfd, 65536)
+                            if not data:
+                                break
+                            ws.send_binary(data)
+                        except OSError:
+                            break
+            finally:
+                logger.info("PTY output thread exited")
+                sr.set()
+
+        t = threading.Thread(target=read_pty_output, args=(master_fd, shell_proc, shell_restart), daemon=True)
+        t.start()
+
+        try:
+            while not shell_restart.is_set() and not reconnect_event.is_set():
+                try:
+                    msg = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if not msg:
+                    shell_restart.set()
+                    break
+                if isinstance(msg, bytes):
+                    os.write(master_fd, msg)
+                elif isinstance(msg, str):
+                    if msg == "__PONG__":
+                        continue
+                    if msg.startswith("__RESIZE:"):
+                        try:
+                            _, dims = msg.split(":", 1)
+                            r, c = map(int, dims.split(","))
+                            _set_winsize(master_fd, r, c)
+                        except (ValueError, OSError) as e:
+                            logger.debug(f"Resize failed: {e}")
+                        continue
+                    if msg.startswith("__SIGNAL:"):
+                        sig_name = msg.split(":", 1)[1].strip()
+                        _send_signal(shell_proc, sig_name)
+                        continue
+                    os.write(master_fd, (msg + "\n").encode())
+        except websocket.WebSocketConnectionClosedException:
+            logger.warning("WebSocket connection closed")
+            reconnect_event.set()
+            break
+        except websocket.WebSocketTimeoutException:
             pass
+        except Exception as e:
+            logger.error(f"Receive error: {e}")
+        finally:
+            shell_restart.set()
+            _terminate_process(shell_proc)
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+
+        if not reconnect_event.is_set():
+            restart_count += 1
+            logger.warning(f"Shell respawning ({restart_count}/{max_restarts})...")
+            time.sleep(2)
+
+    if restart_count >= max_restarts:
+        logger.error(f"Shell respawn limit reached ({max_restarts}), triggering reconnect")
+    reconnect_event.set()
+    ws.close()
 
 
 # ──────────────────────────────────────────────

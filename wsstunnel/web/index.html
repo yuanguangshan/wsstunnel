@@ -23,14 +23,7 @@
     border-radius: 4px;
   }
   #status.connected { background: #2ecc71; }
-  #backend-select {
-    font: 12px/1.5 Menlo, Monaco, monospace;
-    background: #16213e; color: #eee;
-    border: 1px solid #0f3460; border-radius: 4px;
-    padding: 2px 6px; outline: none;
-    cursor: pointer;
-  }
-  #backend-select:disabled { opacity: 0.4; cursor: default; }
+
   #connect-form {
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
@@ -140,7 +133,6 @@
 <body>
 
 <div id="top-bar">
-  <select id="backend-select" disabled><option>—</option></select>
   <span id="status">Disconnected</span>
   <button id="cluster-btn" class="hidden">📊 集群</button>
 </div>
@@ -331,31 +323,13 @@ function handleRelayText(text) {
   if (text.startsWith('[Info] Connected backends:')) {
     const firstLine = text.split('\n')[0];  // 只取第一行，忽略 [Info] Current:
     const listStr = firstLine.split(':').slice(1).join(':').trim();
-    const sel = document.getElementById('backend-select');
-    if (listStr === 'No backends connected' || !listStr) {
-      sel.innerHTML = '<option>无后端</option>';
-      sel.disabled = true;
-    } else {
-      backends = listStr.split(',').map(s => s.trim()).filter(s => s);
-      sel.innerHTML = backends.map(b => {
-        const current = b.endsWith(' *');
-        const display = current ? b.slice(0, -2).trim() : b;
-        const clean = display.replace(/ ↑[^ ]+/, '');
-        const name = clean.replace(/\s*\([^)]*\)$/, '');
-        return `<option value="${name}" ${current ? 'selected' : ''}>${display}</option>`;
-      }).join('');
-      sel.disabled = false;
-    }
-    document.getElementById('backend-select').style.display = '';
-    return;  // ← 直接返回，不写终端
+    backends = listStr.split(',').map(s => s.trim()).filter(s => s);
+    return;  // 静默更新 backends，不写终端
   }
   // 切换后端确认
   if (text.startsWith('[Info] Switched to backend:')) {
     const name = text.split(':').slice(1).join(':').trim().split('(')[0].trim();
-    const sel = document.getElementById('backend-select');
-    for (let opt of sel.options) {
-      if (opt.value === name) { opt.selected = true; break; }
-    }
+    // 切换确认仅在终端显示
   }
   // 其他文本回复写入终端
   if (term) term.write(text + '\r\n');
@@ -454,14 +428,6 @@ function initTerminal() {
     });
   }
 }
-
-// 后端选择器默认隐藏，收到后端列表后显示
-document.getElementById('backend-select').style.display = 'none';
-document.getElementById('backend-select').addEventListener('change', function() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send('USE ' + this.value);
-  }
-});
 
 // ── 集群面板 ──
 let _listTimer = null;
