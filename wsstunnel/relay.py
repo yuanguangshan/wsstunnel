@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import ssl
+import time
 from typing import Any
 from urllib.parse import urlparse, parse_qs
 
@@ -263,6 +264,7 @@ async def _send_backend_list(
     backends: dict[str, Any],
     backend_modes: dict[str, str] | None = None,
     current: str | None = None,
+    backend_connected_at: dict[str, float] | None = None,
 ) -> None:
     """向前端发送当前后端列表。
 
@@ -271,15 +273,27 @@ async def _send_backend_list(
         backends: 后端名称→连接映射。
         backend_modes: 后端名称→模式映射。
         current: 当前选中的后端名称。
+        backend_connected_at: 后端名称→连接时间戳。
     """
     if not backends:
         await ws.send("[Info] No backends connected")
     else:
+        now = time.time()
         names: list[str] = []
         for n in backends:
             mode = (backend_modes or {}).get(n, "pipe")
             marker = " *" if n == current else ""
-            names.append(f"{n}({mode}){marker}")
+            uptime = ""
+            if backend_connected_at and n in backend_connected_at:
+                elapsed = int(now - backend_connected_at[n])
+                if elapsed < 60:
+                    uptime = f" ↑{elapsed}s"
+                elif elapsed < 3600:
+                    uptime = f" ↑{elapsed // 60}m"
+                else:
+                    uptime = f" ↑{elapsed // 3600}h{(elapsed % 3600) // 60}m"
+            names.append(f"{n}({mode}){uptime}{marker}")
+        lines = [f"[Info] Connected backends: {', '.join(names)}"]
         lines = [f"[Info] Connected backends: {', '.join(names)}"]
         if current:
             lines.append(f"[Info] Current: {current}")
@@ -291,6 +305,7 @@ async def _broadcast_backend_list(
     backends: dict[str, Any],
     backend_modes: dict[str, str],
     frontend_targets: dict[Any, str | None],
+    backend_connected_at: dict[str, float] | None = None,
 ) -> None:
     """广播后端列表给所有前端。
 
@@ -306,7 +321,7 @@ async def _broadcast_backend_list(
     for f in frontends:
         try:
             current = frontend_targets.get(f)
-            await _send_backend_list(f, backends, backend_modes, current)
+            await _send_backend_list(f, backends, backend_modes, current, backend_connected_at)
         except Exception:
             dead.add(f)
     frontends -= dead
@@ -336,6 +351,7 @@ class RelayState:
         self.notifier = notifier
         self.backends: dict[str, Any] = {}
         self.backend_modes: dict[str, str] = {}
+        self.backend_connected_at: dict[str, float] = {}
         self.frontends: set[Any] = set()
         self.frontend_targets: dict[Any, str | None] = {}
         self.frontend_text_modes: dict[Any, bool] = {}
@@ -386,6 +402,7 @@ class RelayState:
             name = self._next_backend_name()
         self.backends[name] = ws
         self.backend_modes[name] = mode
+        self.backend_connected_at[name] = time.time()
         logger.info(
             f"Backend registered: '{name}' mode={mode} "
             f"(total {len(self.backends)})"
@@ -398,7 +415,7 @@ class RelayState:
         # 通知所有前端后端列表变化
         await _broadcast_backend_list(
             self.frontends, self.backends, self.backend_modes,
-            self.frontend_targets,
+            self.frontend_targets, self.backend_connected_at,
         )
         return name
 
@@ -406,6 +423,7 @@ class RelayState:
         """注销后端连接并清理关联状态。"""
         self.backends.pop(name, None)
         self.backend_modes.pop(name, None)
+        self.backend_connected_at.pop(name, None)
         # 如果断开的后端正好是某个前端的当前目标，清除它
         for f in list(self.frontend_targets):
             if self.frontend_targets.get(f) == name:
@@ -417,7 +435,7 @@ class RelayState:
             )
         await _broadcast_backend_list(
             self.frontends, self.backends, self.backend_modes,
-            self.frontend_targets,
+            self.frontend_targets, self.backend_connected_at,
         )
 
     # ── 前端注册/注销 ──
@@ -429,6 +447,7 @@ class RelayState:
         logger.info(f"Frontend authenticated (total {len(self.frontends)})")
         await _send_backend_list(
             ws, self.backends, self.backend_modes, None,
+            self.backend_connected_at,
         )
         try:
             async for message in ws:
@@ -494,7 +513,7 @@ class RelayState:
     async def _handle_list(self, ws: Any) -> None:
         """处理 LIST 命令：列举所有后端。"""
         current = self.frontend_targets.get(ws)
-        await _send_backend_list(ws, self.backends, self.backend_modes, current)
+        await _send_backend_list(ws, self.backends, self.backend_modes, current, self.backend_connected_at)
 
     async def _handle_use(self, ws: Any, msg: str) -> None:
         """处理 USE [name] 命令：切换或查看当前后端。"""

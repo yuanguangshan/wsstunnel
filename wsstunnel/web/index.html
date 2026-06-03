@@ -165,7 +165,7 @@
   </div>
   <div id="cluster-body">
     <table id="cluster-table">
-      <thead><tr><th>后端</th><th>模式</th><th>状态</th></tr></thead>
+      <thead><tr><th>后端</th><th>模式</th><th>运行时间</th><th>状态</th></tr></thead>
       <tbody id="cluster-tbody"></tbody>
     </table>
     <div class="cluster-section">
@@ -321,7 +321,8 @@ function connect() {
 function handleRelayText(text) {
   // 后端列表更新（静默，不写终端）
   if (text.startsWith('[Info] Connected backends:')) {
-    const listStr = text.split(':').slice(1).join(':').trim();
+    const firstLine = text.split('\n')[0];  // 只取第一行，忽略 [Info] Current:
+    const listStr = firstLine.split(':').slice(1).join(':').trim();
     const sel = document.getElementById('backend-select');
     if (listStr === 'No backends connected' || !listStr) {
       sel.innerHTML = '<option>无后端</option>';
@@ -462,16 +463,19 @@ function renderCluster() {
   tbody.innerHTML = backends.map(b => {
     const current = b.endsWith(' *');
     const display = current ? b.slice(0, -2).trim() : b;
-    const name = display.replace(/\s*\([^)]*\)$/, '');
-    const mode = display.match(/\(([^)]+)\)/)?.[1] || '?';
+    const uptime = display.match(/ ↑([^ ]+)/)?.[1] || '';
+    const clean = display.replace(/ ↑[^ ]+/, '');
+    const name = clean.replace(/\s*\([^)]*\)$/, '');
+    const mode = clean.match(/\(([^)]+)\)/)?.[1] || '?';
     return `<tr>
       <td class="name">${current ? '<b>' : ''}${name}${current ? '</b>' : ''}</td>
       <td class="mode">${mode}</td>
+      <td>${uptime || '—'}</td>
       <td><span class="status-dot online"></span></td>
     </tr>`;
   }).join('');
   sel.innerHTML = backends.map(b => {
-    const n = (b.replace(/\s*\*$/, '').replace(/\s*\([^)]*\)$/, '')).trim();
+    const n = (b.replace(/ ↑[^ ]+/, '').replace(/\s*\*$/, '').replace(/\s*\([^)]*\)$/, '')).trim();
     return `<option value="${n}">${n}</option>`;
   }).join('');
   document.getElementById('cluster-btn').classList.remove('hidden');
