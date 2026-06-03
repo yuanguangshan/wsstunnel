@@ -313,34 +313,11 @@ function initTerminal() {
   });
 
   // 按键输入 → WebSocket 二进制帧
-  // IME 中文输入：多事件兜底，防重复发送
-  let _imeSending = false;
-  let _imeText = '';
-  function sendIME(text) {
-    if (_imeSending || !ws || ws.readyState !== WebSocket.OPEN) return;
-    _imeSending = true;
-    _imeText = text;
-    ws.send(new TextEncoder().encode(text));
-    setTimeout(() => { _imeSending = false; _imeText = ''; }, 200);
-  }
-
+  // 按键输入（含 IME 中文）→ xterm 的 onData 处理所有输入
   term.onData((data) => {
-    if (data && data === _imeText) { _imeText = ''; return; }  // IME 已发
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
-  });
-  // beforeinput — 标准 API（现代浏览器），xterm 处理前拦截
-  term.textarea.addEventListener('beforeinput', (e) => {
-    if (e.inputType === 'insertFromComposition' && e.data) {
-      e.preventDefault();
-      sendIME(e.data);
-    }
-  });
-  // compositionend — 兜底（浏览器兼容）
-  term.textarea.addEventListener('compositionend', (e) => {
-    const text = e.data || term.textarea.value;
-    if (text) sendIME(text);
   });
 }
 
