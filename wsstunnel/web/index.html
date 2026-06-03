@@ -314,12 +314,20 @@ function initTerminal() {
 
   // 按键输入 → WebSocket 二进制帧
   term.onData((data) => {
+    if (_skipIME) { _skipIME = false; return; }  // IME 字符已发，跳过
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
   });
 
-  // IME 中文输入让 xterm 内部处理，onData 会收到最终选中的字符
+  // IME 中文输入：capture 阶段提前拿到字符，设标志让 onData 跳过
+  let _skipIME = false;
+  term.textarea.addEventListener('compositionend', (e) => {
+    if (e.data && ws && ws.readyState === WebSocket.OPEN) {
+      _skipIME = true;
+      ws.send(new TextEncoder().encode(e.data));
+    }
+  }, { capture: true });
 }
 
 // 后端选择器默认隐藏，收到后端列表后显示
