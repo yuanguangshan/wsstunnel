@@ -168,6 +168,12 @@
       </div>
     </div>
     <div class="cluster-section">
+      <h4>当前后端</h4>
+      <div class="cluster-row">
+        <select id="cluster-current-select"><option>—</option></select>
+      </div>
+    </div>
+    <div class="cluster-section">
       <h4>单独发送</h4>
       <div class="cluster-row">
         <select id="cluster-single-select"><option>—</option></select>
@@ -434,6 +440,7 @@ let _listTimer = null;
 
 function renderCluster() {
   const tbody = document.getElementById('cluster-tbody');
+  const cur = document.getElementById('cluster-current-select');
   const sel = document.getElementById('cluster-single-select');
   tbody.innerHTML = backends.map(b => {
     const current = b.endsWith(' *');
@@ -449,10 +456,16 @@ function renderCluster() {
       <td><span class="status-dot online"></span></td>
     </tr>`;
   }).join('');
-  sel.innerHTML = backends.map(b => {
-    const n = b.replace(/ ↑[^ ]+/, '').replace(/\s*\*$/, '').replace(/\s*\([^)]*\)$/, '').trim();
-    return `<option value="${n}">${n}</option>`;
-  }).join('');
+  const names = backends.map(b => {
+    return b.replace(/ ↑[^ ]+/, '').replace(/\s*\*$/, '').replace(/\s*\([^)]*\)$/, '').trim();
+  });
+  const currentName = backends.some(b => b.endsWith(' *'))
+    ? names[backends.findIndex(b => b.endsWith(' *'))]
+    : names[0] || '';
+  cur.innerHTML = names.map(n =>
+    `<option value="${n}" ${n === currentName ? 'selected' : ''}>${n}</option>`
+  ).join('');
+  sel.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
   document.getElementById('cluster-btn').classList.remove('hidden');
 }
 
@@ -498,6 +511,11 @@ document.getElementById('cluster-all-btn').addEventListener('click', function() 
 });
 document.getElementById('cluster-all-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('cluster-all-btn').click();
+});
+
+// 切换当前后端
+document.getElementById('cluster-current-select').addEventListener('change', function() {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send('USE ' + this.value);
 });
 
 // 单独发送
