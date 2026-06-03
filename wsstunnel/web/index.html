@@ -89,7 +89,6 @@
 let ws = null;
 let term = null;
 let backends = [];
-let _composing = false;
 let _mobileDup = '';
 let _mobileDupTimer = null;
 
@@ -190,9 +189,8 @@ function connect() {
     } else {
       if (term) term.write(new Uint8Array(e.data));
     }
-    // iOS 上 term.write 可能导致 textarea 失焦（键盘收回、IME 中断）
-    // 但合成期间不能 refocus，否则会打断移动端 IME 输入
-    if (!_composing && term && term.textarea && document.activeElement !== term.textarea) {
+    // iOS 上 term.write 可能导致 textarea 失焦，确保焦点在 textarea 上
+    if (term && term.textarea && document.activeElement !== term.textarea) {
       term.textarea.focus();
     }
   };
