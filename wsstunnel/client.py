@@ -276,6 +276,8 @@ def _run_pty_mode(
                             ws.send_binary(data)
                         except OSError:
                             break
+                        except Exception:
+                            break
             finally:
                 logger.info("PTY output thread exited")
                 sr.set()
