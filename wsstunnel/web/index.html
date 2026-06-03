@@ -303,8 +303,8 @@ function initTerminal() {
   window.addEventListener('resize', sendResize);
   setTimeout(sendResize, 500);
 
-  // 粘贴事件：右键 / Ctrl+Shift+V
-  term.element.addEventListener('paste', (e) => {
+  // 粘贴事件：监听 textarea（xterm 实际接收输入的元素）
+  term.textarea.addEventListener('paste', (e) => {
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData('text/plain');
     if (text && ws && ws.readyState === WebSocket.OPEN) {
