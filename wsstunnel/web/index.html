@@ -319,14 +319,25 @@ function initTerminal() {
     }
   });
 
-  // IME 中文输入：beforeinput 在 xterm 处理前拦截，preventDefault 避免重复
+  // IME 中文输入：多事件兜底，防重复发送
+  let _imeSending = false;
+  function sendIME(text) {
+    if (_imeSending || !ws || ws.readyState !== WebSocket.OPEN) return;
+    _imeSending = true;
+    ws.send(new TextEncoder().encode(text));
+    setTimeout(() => { _imeSending = false; }, 200);
+  }
+  // beforeinput — 标准 API（现代浏览器），xterm 处理前拦截
   term.textarea.addEventListener('beforeinput', (e) => {
     if (e.inputType === 'insertFromComposition' && e.data) {
       e.preventDefault();
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(new TextEncoder().encode(e.data));
-      }
+      sendIME(e.data);
     }
+  });
+  // compositionend — 兜底（浏览器兼容）
+  term.textarea.addEventListener('compositionend', (e) => {
+    const text = e.data || term.textarea.value;
+    if (text) sendIME(text);
   });
 }
 
