@@ -503,12 +503,12 @@ document.getElementById('cluster-close').addEventListener('click', function() {
 document.getElementById('cluster-all-btn').addEventListener('click', function() {
   const cmd = document.getElementById('cluster-all-input').value.trim();
   if (!cmd || !ws || ws.readyState !== WebSocket.OPEN) return;
-  backends.forEach(b => {
+  backends.forEach((b, i) => {
     const name = (b.replace(/\s*\*$/, '').replace(/\s*\([^)]*\)$/, '')).trim();
-    ws.send(`@${name} ${cmd}`);
+    setTimeout(() => ws.send(`@${name} ${cmd}`), i * 200);
   });
   document.getElementById('cluster-all-input').value = '';
-  term.write(`\r\n📡 @all: ${cmd}\r\n`);
+  term.write(`\r\n╔════ @all: ${cmd} ═══════════════╗\r\n`);
 });
 document.getElementById('cluster-all-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('cluster-all-btn').click();
