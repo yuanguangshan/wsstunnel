@@ -720,8 +720,8 @@ async def _run_async(
     async with websockets.serve(
         handler, host, port,
         ssl=ssl_context,
-        ping_interval=20,
-        ping_timeout=10,
+        ping_interval=None,
+        ping_timeout=None,
         process_request=_http_request_handler,
     ):
         scheme = "wss" if ssl_context else "ws"
@@ -729,7 +729,7 @@ async def _run_async(
         logger.info(f"Relay running on {scheme}://{host}:{port}")
         if _INDEX_HTML:
             logger.info(f"Web terminal: {http_scheme}://{host}:{port}")
-        logger.info("Heartbeat: ping every 20s, timeout 10s")
+        logger.info("Heartbeat: disabled protocol ping (using __PING__/__PONG__ instead)")
         await asyncio.Future()
 
 
