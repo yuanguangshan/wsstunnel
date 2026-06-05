@@ -178,7 +178,7 @@ def _resolve_path(path: str) -> str:
 
 def _handle_file_cmd(msg: str, ws: websocket.WebSocket) -> bool:
     """处理文件传输命令。返回 True 表示 msg 已被文件模块消费。"""
-    global _file_transfers
+    global _file_transfers, _cwd
 
     # ── 上传：前端通知开始上传 ──
     if msg.startswith("__FILE_BEGIN:"):
@@ -257,6 +257,22 @@ def _handle_file_cmd(msg: str, ws: websocket.WebSocket) -> bool:
         except Exception:
             return True
         _send_file(path, ws)
+        return True
+
+    # ── 当前目录追踪（Web 终端通知的 cd 命令）──
+    if msg.startswith("__CWD:"):
+        target = msg[6:].strip()
+        if target:
+            global _cwd
+            if target.startswith("~/"):
+                home = os.environ.get("HOME", "/")
+                target = os.path.join(home, target[2:])
+            elif target == "~":
+                target = os.environ.get("HOME", "/")
+            if not os.path.isabs(target):
+                target = os.path.normpath(os.path.join(_cwd, target))
+            _cwd = target
+            logger.debug(f"CWD updated via __CWD: {_cwd}")
         return True
 
     # ── Shell 友好命令：dl <path>（从交互式 Shell 下载文件）──

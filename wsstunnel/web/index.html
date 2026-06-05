@@ -454,13 +454,37 @@ function initTerminal() {
   window.addEventListener('resize', sendResize);
   setTimeout(sendResize, 500);
 
+  // ── 命令行输入缓冲：用于拦截 dl 等特殊命令 ──
+  let _inputBuf = '';
+
   // 所有输入（键盘、IME 中文、粘贴）统一通过 xterm 的 onData 处理
   // 移动端去重：compositionend/paste 兜底可能先于 onData 发送
   term.onData((data) => {
     if (data && data === _mobileDup) { _mobileDup = ''; return; }
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(new TextEncoder().encode(data));
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    // 缓冲输入，遇到 \r 或 \n 时检查是否为 dl 命令
+    _inputBuf += data;
+    if (data === '\r' || data === '\n') {
+      const line = _inputBuf.replace('\r', '').replace('\n', '').trim();
+      _inputBuf = '';
+      // dl <path> → 走文本通道，不走 PTY
+      if (line.startsWith('dl ')) {
+        const path = line.substring(3).trim();
+        if (path) {
+          ws.send(`dl ${path}`);
+          if (term) term.write(`\r\n[Info] Downloading ${path}...\r\n`);
+          return;
+        }
+      }
+      // cd <dir> → 通知后端追踪当前目录（不写 PTY，避免重复执行）
+      if (line.startsWith('cd ') || line === 'cd') {
+        const dir = line === 'cd' ? '~' : line.substring(3).trim();
+        ws.send(`__CWD:${dir}`);
+      }
     }
+    // 正常输入：二进制发送
+    ws.send(new TextEncoder().encode(data));
   });
 
   // 移动端兜底：iOS 中文键盘用 insertText（非 insertFromComposition）
