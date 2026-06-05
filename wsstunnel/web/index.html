@@ -775,10 +775,13 @@ function fabSend(key) {
     const code = key.toUpperCase().charCodeAt(0) - 64;
     if (code >= 1 && code <= 26) {
       bytes = [code];
-      term.write(`^${key.toUpperCase()}`);
     }
   }
-  if (bytes) ws.send(new Uint8Array(bytes));
+  if (bytes) {
+    ws.send(new Uint8Array(bytes));
+    // 焦点留在终端，方便连续按键
+    if (term && term.textarea) term.textarea.focus();
+  }
 }
 
 document.getElementById('fab').addEventListener('click', function() {
@@ -803,18 +806,12 @@ document.getElementById('fab-panel').addEventListener('click', function(e) {
       text = buf.getLine(buf.length - 1)?.translateToString() || '';
     }
     if (navigator.clipboard && text) {
-      navigator.clipboard.writeText(text).then(() => {
-        term.write(`\r\n[Info] Copied ${text.split('\\n').length} line(s)\r\n`);
-      });
+      navigator.clipboard.writeText(text);
     }
-    document.getElementById('fab').classList.remove('active');
-    document.getElementById('fab-panel').classList.remove('show');
     return;
   }
   fabSend(key);
-  // 发送后自动收起面板
-  document.getElementById('fab').classList.remove('active');
-  document.getElementById('fab-panel').classList.remove('show');
+  // 不收起面板，方便连续点击
 });
 
 // 点击面板外自动收起
