@@ -241,7 +241,6 @@ function mobileSend(text) {
       const path = line.substring(3).trim();
       if (path) {
         ws.send(`dl ${path}`);
-        if (term) term.write(`\r\n[Info] Downloading ${path}...\r\n`);
         // 设置 _mobileDup 让 onData 跳过这个换行
         _mobileDup = text;
         clearTimeout(_mobileDupTimer);
@@ -479,11 +478,12 @@ function initTerminal() {
   // 所有输入（键盘、IME 中文、粘贴）统一通过 xterm 的 onData 处理
   // 移动端去重：compositionend/paste 兜底可能先于 onData 发送
   term.onData((data) => {
-    if (data && data === _mobileDup) { _mobileDup = ''; return; }
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // 缓冲输入，遇到 \r 或 \n 时检查是否为 dl 命令
+    // 缓冲输入（放在 _mobileDup 检查之前，确保移动端也能积累）
     _inputBuf += data;
+    if (data && data === _mobileDup) { _mobileDup = ''; return; }
+
     if (data === '\r' || data === '\n') {
       const line = _inputBuf.replace('\r', '').replace('\n', '').trim();
       _inputBuf = '';
@@ -492,7 +492,6 @@ function initTerminal() {
         const path = line.substring(3).trim();
         if (path) {
           ws.send(`dl ${path}`);
-          if (term) term.write(`\r\n[Info] Downloading ${path}...\r\n`);
           return;
         }
       }
@@ -509,7 +508,10 @@ function initTerminal() {
   // 移动端兜底：iOS 中文键盘用 insertText（非 insertFromComposition）
   if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     term.textarea.addEventListener('beforeinput', (e) => {
-      if (e.data && (e.inputType === 'insertText' || e.inputType === 'insertFromComposition')) {
+      // 处理各种输入：普通按键、中文输入法、换行键
+      if (e.inputType === 'insertLineBreak') {
+        mobileSend('\n');
+      } else if (e.data && (e.inputType === 'insertText' || e.inputType === 'insertFromComposition')) {
         mobileSend(e.data);
       }
     });

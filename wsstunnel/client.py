@@ -284,7 +284,6 @@ def _handle_file_cmd(msg: str, ws: websocket.WebSocket) -> bool:
         if path:
             path = _resolve_path(path)
             logger.info(f"Shell download request: {path}")
-            ws.send(f"[Info] Downloading {path}...")
             _send_file(path, ws)
             return True
 
@@ -509,7 +508,6 @@ def _run_pty_mode(
                                 path = _resolve_path(line[3:].strip())
                                 if path:
                                     logger.info(f"PTY buffer dl: {path}")
-                                    ws.send(f"\r\n[Info] Downloading {path}...\r\n")
                                     # 后台线程发送，不阻塞主循环（用户继续输入）
                                     threading.Thread(
                                         target=_send_file,
