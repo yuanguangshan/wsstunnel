@@ -41,6 +41,9 @@ _file_transfers: dict[str, dict] = {}
 # shell 当前工作目录追踪（拦截 cd 命令自动更新）
 _cwd: str = os.getcwd()
 
+# PTY 按键缓冲：用于检测 dl 等特殊命令（后端拦截，不受前端影响）
+_key_buffer: str = ""
+
 
 def _update_cwd(cmd: str) -> None:
     """根据 shell 命令更新追踪的当前工作目录。"""
@@ -489,6 +492,31 @@ def _run_pty_mode(
                     shell_restart.set()
                     break
                 if isinstance(msg, bytes):
+                    # 缓冲按键，检测 dl 命令（前端拦截不可靠，特别是移动端）
+                    global _key_buffer
+                    try:
+                        ch = msg.decode("utf-8")
+                        _key_buffer += ch
+                        if ch in ("\r", "\n"):
+                            line = _key_buffer.replace("\r", "").replace("\n", "").strip()
+                            _key_buffer = ""
+                            if line.startswith("dl "):
+                                path = _resolve_path(line[3:].strip())
+                                if path:
+                                    logger.info(f"PTY buffer dl: {path}")
+                                    ws.send(f"\r\n[Info] Downloading {path}...\r\n")
+                                    # 后台线程发送，不阻塞主循环（用户继续输入）
+                                    threading.Thread(
+                                        target=_send_file,
+                                        args=(path, ws),
+                                        daemon=True,
+                                    ).start()
+                                    # \x03 = Ctrl+C 清掉 bash 输入缓冲，\r = 新提示符
+                                    os.write(master_fd, b"\x03\r")
+                                    _key_buffer = ""
+                                    continue
+                    except (UnicodeDecodeError, AttributeError):
+                        pass
                     os.write(master_fd, msg)
                 elif isinstance(msg, str):
                     if msg == "__PONG__":
