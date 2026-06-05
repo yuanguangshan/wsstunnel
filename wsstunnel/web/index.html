@@ -76,6 +76,31 @@
     height: 100%; background: #2ecc71; border-radius: 2px; transition: width 0.3s;
   }
 
+  /* ── 移动端虚拟按键 ── */
+  @media (pointer: coarse) {
+    #ctrl-bar { display: flex !important; }
+  }
+  #ctrl-bar {
+    display: none;
+    flex-direction: column; align-items: center; gap: 4px;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    padding: 4px 4px 8px; z-index: 30;
+    background: rgba(26, 26, 46, 0.92);
+    border-top: 1px solid #333;
+  }
+  #ctrl-bar .row {
+    display: flex; justify-content: center; gap: 5px; width: 100%;
+  }
+  #ctrl-bar button {
+    font: 12px system-ui, sans-serif;
+    background: #0f3460; color: #ccc;
+    border: 1px solid #333; border-radius: 6px;
+    padding: 6px 14px; cursor: pointer; min-width: 44px;
+  }
+  #ctrl-bar button:active { background: #1a4a8a; color: #fff; }
+  #ctrl-bar button.active { background: #e74c3c; color: #fff; border-color: #e74c3c; }
+  #ctrl-bar .label { color: #888; font-size: 10px; padding: 6px 4px; }
+
   /* ── 集群面板 ── */
   #cluster-btn {
     font: 12px monospace;
@@ -214,6 +239,27 @@
   <div class="progress"><div class="progress-bar" id="file-progress-bar"></div></div>
 </div>
 
+<!-- 移动端虚拟控制键 -->
+<div id="ctrl-bar">
+  <div class="row">
+    <button id="ctrl-lock" class="ctrl-lock">🔒 Ctrl</button>
+    <span class="label">|</span>
+    <button data-key="c">C</button>
+    <button data-key="d">D</button>
+    <button data-key="z">Z</button>
+    <button data-key="l">L</button>
+    <span class="label">|</span>
+    <button data-key="escape">Esc</button>
+    <button data-key="tab">Tab</button>
+  </div>
+  <div class="row">
+    <button data-key="arrow-up">↑</button>
+    <button data-key="arrow-down">↓</button>
+    <button data-key="arrow-left">←</button>
+    <button data-key="arrow-right">→</button>
+  </div>
+</div>
+
 <!-- 隐藏的文件选择器 -->
 <input type="file" id="file-input" style="display:none" />
 
@@ -232,6 +278,14 @@ let _mobileBuf = '';
 
 function mobileSend(text) {
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  // Ctrl 锁定：下一个字母转 Ctrl+字母
+  if (_ctrlLock && text.length === 1 && /^[a-zA-Z]$/.test(text)) {
+    _ctrlLock = false;
+    document.getElementById('ctrl-lock').classList.remove('active');
+    document.getElementById('ctrl-lock').textContent = '🔒 Ctrl';
+    sendCtrlChar(text);
+    return;
+  }
   // 移动端也在缓冲中检测 dl 命令
   _mobileBuf += text;
   if (text === '\r' || text === '\n') {
@@ -480,6 +534,15 @@ function initTerminal() {
   term.onData((data) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
+    // Ctrl 锁定：下一个字母自动转 Ctrl+字母，用完解锁
+    if (_ctrlLock && data.length === 1 && /^[a-zA-Z]$/.test(data)) {
+      _ctrlLock = false;
+      document.getElementById('ctrl-lock').classList.remove('active');
+      document.getElementById('ctrl-lock').textContent = '🔒 Ctrl';
+      sendCtrlChar(data);
+      return;
+    }
+
     // 缓冲输入（放在 _mobileDup 检查之前，确保移动端也能积累）
     _inputBuf += data;
     if (data && data === _mobileDup) { _mobileDup = ''; return; }
@@ -685,6 +748,40 @@ document.getElementById('file-input').addEventListener('change', function(e) {
 
   readNext();
   this.value = '';  // 重置，允许再次选择同一文件
+});
+
+// ── Ctrl 自由组合锁定 ──
+let _ctrlLock = false;
+
+function sendCtrlChar(key) {
+  const code = key.toUpperCase().charCodeAt(0) - 64;
+  if (code >= 1 && code <= 26) {
+    const data = String.fromCharCode(code);
+    ws.send(new TextEncoder().encode(data));
+    term.write(`^${key.toUpperCase()}`);
+  }
+}
+
+document.getElementById('ctrl-lock').addEventListener('click', function() {
+  _ctrlLock = !_ctrlLock;
+  this.classList.toggle('active', _ctrlLock);
+  this.textContent = _ctrlLock ? '🔓 Ctrl' : '🔒 Ctrl';
+});
+
+document.getElementById('ctrl-bar').addEventListener('click', function(e) {
+  const btn = e.target.closest('button');
+  if (!btn || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (btn.id === 'ctrl-lock') return;
+  const key = btn.dataset.key;
+  let data;
+  if (key === 'escape') { data = '\x1b'; }
+  else if (key === 'tab') { data = '\t'; }
+  else if (key === 'arrow-up') { data = '\x1b[A'; }
+  else if (key === 'arrow-down') { data = '\x1b[B'; }
+  else if (key === 'arrow-left') { data = '\x1b[D'; }
+  else if (key === 'arrow-right') { data = '\x1b[C'; }
+  else { sendCtrlChar(key); return; }
+  ws.send(new TextEncoder().encode(data));
 });
 
 // ── 集群面板 ──
