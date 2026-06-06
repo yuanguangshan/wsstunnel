@@ -469,11 +469,14 @@ def _run_pty_mode(
                         try:
                             data = os.read(mfd, 65536)
                             if not data:
+                                logger.warning("PTY read EOF (shell exited)")
                                 break
                             ws.send_binary(data)
-                        except OSError:
+                        except OSError as e:
+                            logger.error(f"PTY reader OSError: {e}")
                             break
-                        except Exception:
+                        except Exception as e:
+                            logger.error(f"PTY reader exception: {type(e).__name__}: {e}")
                             break
             finally:
                 logger.info("PTY output thread exited")
