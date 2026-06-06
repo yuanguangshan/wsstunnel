@@ -395,9 +395,17 @@ open "wsstunnel/web/index.html?server=wss://your-vps:443&token=mysecret"
 
 你也可以通过 `wsstunnel/web/index.html?server=ws://your-vps:8080` 直接连接 ws:// 中继。
 
-### 工作流 D：系统服务（systemd 自动启动）
+### 工作流 E：系统服务（systemd 自动启动）
 
-VPS 端的 `/etc/systemd/system/wsstunnel.service`：
+先确认 wsstunnel 安装路径：
+
+```bash
+which wsstunnel
+# 常见路径：/usr/local/bin/wsstunnel（pip install）
+# 或：/usr/bin/wsstunnel（系统包管理器）
+```
+
+创建 systemd 服务 `/etc/systemd/system/wsstunnel.service`：
 
 ```ini
 [Unit]
@@ -408,7 +416,7 @@ After=network.target
 Type=simple
 User=root
 Environment=WS_TUNNEL_TOKEN=mysecret
-ExecStart=/usr/local/bin/wsstunnel relay --port 443 --cert /etc/letsencrypt/live/example.com/fullchain.pem --key /etc/letsencrypt/live/example.com/privkey.pem
+ExecStart=$(which wsstunnel) relay --port 443 --cert /etc/letsencrypt/live/example.com/fullchain.pem --key /etc/letsencrypt/live/example.com/privkey.pem
 Restart=always
 RestartSec=10
 
