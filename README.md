@@ -233,7 +233,6 @@ wsstunnel relay --port 8080 --token mysecret --quiet
 | `-t, --token` | — | 认证令牌，不设则不开启认证 |
 | `--cert` | — | TLS 证书路径（提供后启用 wss://） |
 | `--key` | — | TLS 私钥路径，未指定时使用 --cert |
-| `--verbose` | — | 输出 DEBUG 级别日志 |
 | `--wxpush` | — | 微信推送通知，格式 `url:key`。后端上线/下线时发送通知 |
 | `--verbose` | — | 输出 DEBUG 级别日志 |
 | `--quiet` | — | 仅输出 WARNING 及以上日志 |
@@ -416,7 +415,8 @@ After=network.target
 Type=simple
 User=root
 Environment=WS_TUNNEL_TOKEN=mysecret
-ExecStart=$(which wsstunnel) relay --port 443 --cert /etc/letsencrypt/live/example.com/fullchain.pem --key /etc/letsencrypt/live/example.com/privkey.pem
+# 用 which wsstunnel 的实际输出替换下面的路径
+ExecStart=/usr/local/bin/wsstunnel relay --port 443 --cert /etc/letsencrypt/live/example.com/fullchain.pem --key /etc/letsencrypt/live/example.com/privkey.pem
 Restart=always
 RestartSec=10
 
@@ -804,10 +804,13 @@ pytest
 
 中继端支持通过 `--wxpush` 参数在**后端上线/下线**时发送微信通知。
 
+1. 打开 [wxpusher 官网](https://wxpusher.zjiecode.com) 注册并创建应用
+2. 在应用设置中获取 app_token
+3. 启动中继时加上 `--wxpush` 参数：
+
 ```bash
-# 申请 wxpusher 的 app token，然后：
 wsstunnel relay --port 8080 --token mysecret \
-    --wxpush https://wxpusher.zjiecode.com/api/send/message:your_app_token
+    --wxpush https://wxpusher.zjiecode.com/api/send/message:你的app_token
 ```
 
 当容器连接或断开时，中继会自动向微信发送通知消息。
