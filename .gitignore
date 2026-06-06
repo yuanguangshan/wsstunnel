@@ -20,3 +20,4 @@ venv/
 key.pem
 cert.pem
 .claude/
+.weaver
