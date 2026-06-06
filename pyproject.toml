@@ -34,4 +34,4 @@ include = ["wsstunnel*"]
 wsstunnel = ["web/*"]
 
 [project.urls]
-Homepage = "https://github.com/yuanguangshan/wstunnel"
+Homepage = "https://github.com/yuanguangshan/wsstunnel"
