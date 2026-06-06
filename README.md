@@ -1,5 +1,7 @@
 # wsstunnel
 
+[English 🇬🇧](README.en.md)
+
 wsstunnel 是一款通过 WebSocket 与 HTTP 代理穿透极端受限网络，提供原生 PTY 交互式远程 Shell 的轻量自托管工具。
 
 ## 目录
@@ -82,6 +84,25 @@ wsstunnel 采用了一条完全不同的技术路线：
            ▼
      你看到的输出
 ```
+
+## 30 秒极简演示
+
+不需要 token，不需要证书，三行命令就能跑通：
+
+```bash
+# 终端 1（VPS）
+wsstunnel relay --port 8080
+
+# 终端 2（容器内）
+wsstunnel client --server ws://your-vps:8080
+
+# 终端 3（你的电脑）
+websocat ws://your-vps:8080
+# 输入命令，看到输出：
+whoami
+```
+
+> ⚠️ 无认证，仅限内网测试。生产环境请加 `--token` 和 TLS。
 
 ## 快速开始（5 分钟）
 
@@ -784,7 +805,10 @@ FileNotFoundError: /bin/bash
 | v0.9.0 | 包名统一为 `wsstunnel`，源目录 `ws_tunnel/` → `wsstunnel/` | `from wsstunnel import ...` |
 | v0.9.1 | 显式包发现配置，修复新版 setuptools 打包 | — |
 | v0.9.2 | 新增 `wsstunnel --version`，添加 `[dev]` 可选依赖（pytest） | `pip install wsstunnel[dev]` 安装测试依赖 |
-| v0.18.0 | **文件传输**：`put`/`get` CLI 命令、`dl <path>` Shell 下载、Web 终端上传按钮、__FILE_* 协议 | 向后兼容，旧客户端不受影响。后端需升级至 v0.18.0 才能使用文件传输 |
+| v0.18.0~v0.18.5 | **文件传输** + 中文文件名修复 + CLI 认证死锁 + Shell CWD 追踪 | 后端需升级至 v0.18.5 才能使用文件传输 |
+| v0.18.6~v0.18.11 | **移动端优化**：PTY 按键缓冲、`__CWD:` 追踪、`dl` 后端拦截 | 后端需升级至 v0.18.11 |
+| v0.18.12~v0.18.15 | **移动端浮窗控制面板**：Ctrl 锁定、方向键、复制粘贴 | 仅 Web 终端更新，后端无需升级 |
+| v0.18.16~v0.18.18 | **稳定性修复**：PTY 读者线程日志、`pass_fds` 防 fd 关闭、relay 踢旧迎新 | 需升级 relay 和 client |
 | v0.18.5 | 上传到 shell 当前目录（追踪 `cd` 命令） | 不再写死 `/tmp/` |
 | v0.18.8 | PTY 按键缓冲检测 `dl`，后台线程发送不阻塞命令行 | 解决移动端 `dl` 失效 |
 | v0.18.14 | 移动端浮窗控制面板（⌨ 圆点展开 3 行布局） | 支持 Ctrl+A/E/U/K/W、方向键、复制全屏/本行 |

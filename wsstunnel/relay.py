@@ -657,8 +657,14 @@ class RelayState:
                 if name is None:
                     name = self._next_backend_name()
                 if name in self.backends:
-                    await websocket.close(1008, f"Backend '{name}' already registered")
-                    return
+                    logger.info(f"Backend '{name}' reconnecting, evicting old session")
+                    old_ws = self.backends[name]
+                    try:
+                        await old_ws.close(1000, "Replaced by new session")
+                    except Exception:
+                        pass
+                    self.backends.pop(name, None)
+                    self.backend_modes.pop(name, None)
                 actual_name = await self._register_backend(websocket, name, mode)
                 try:
                     async for message in websocket:

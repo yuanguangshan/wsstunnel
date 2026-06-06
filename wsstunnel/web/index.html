@@ -82,7 +82,7 @@
   }
   #fab {
     display: none;
-    position: fixed; bottom: 20px; right: 20px;
+    position: fixed; right: 10px; bottom: 80px;
     width: 48px; height: 48px; border-radius: 50%;
     background: #0f3460; color: #ccc;
     border: 2px solid #1a4a8a;
@@ -92,12 +92,13 @@
     transition: transform 0.15s;
     user-select: none; -webkit-user-select: none;
   }
-  #fab:active { transform: scale(0.92); }
+  #fab:active { transform: translateY(-50%) scale(0.92); }
   #fab.active { background: #1a4a8a; }
 
   #fab-panel {
     display: none;
-    position: fixed; bottom: 76px; right: 20px;
+    position: fixed; right: 68px;
+    top: calc(50vh - 60px);
     background: rgba(26, 26, 46, 0.95);
     border: 1px solid #333; border-radius: 12px;
     padding: 10px; gap: 6px; z-index: 39;
@@ -107,14 +108,14 @@
   }
   #fab-panel.show { display: flex; }
   #fab-panel .row {
-    display: flex; justify-content: center; gap: 3px;
+    display: flex; justify-content: center; gap: 5px;
   }
   #fab-panel button {
     font: 13px system-ui, sans-serif;
     background: #0f3460; color: #ccc;
     border: 1px solid #333; border-radius: 8px;
-    padding: 7px 10px; cursor: pointer; min-width: 40px;
-    min-height: 42px; text-align: center;
+    padding: 6px 6px; cursor: pointer; min-width: 38px;
+    flex: 1; min-height: 48px; text-align: center; font-size: 14px;
   }
   #fab-panel button:active { background: #1a4a8a; color: #fff; }
   #fab-panel button.active { background: #e74c3c; color: #fff; border-color: #e74c3c; }
@@ -273,11 +274,18 @@
   </div>
   <div class="row">
     <button data-key="arrow-left">←</button>
-    <button data-key="arrow-right">→</button>
     <button data-key="arrow-up">↑</button>
-    <button data-key="arrow-down">↓</button>
+    <button data-key="arrow-right">→</button>
     <button id="fab-copy-all" data-key="copy-all" title="复制全屏">📋</button>
+    <button data-key="pipe">│</button>
     <button id="fab-copy-out" data-key="copy-out" title="复制本行">📄</button>
+  </div>
+  <div class="row" style="margin-top:1px">
+    <button data-key="shift-tab" title="Shift+Tab">⇧⇥</button>
+    <button data-key="arrow-down">↓</button>
+    <button data-key="space" style="flex:2" title="空格">␣</button>
+    <button data-key="hyphen" title="连字符">-</button>
+    <button data-key="install-reasonix" title="一键安装 reasonix">⚡</button>
   </div>
 </div>
 
@@ -766,7 +774,16 @@ function fabSend(key) {
   let bytes;
   if (key === 'escape') bytes = [0x1b];
   else if (key === 'tab') bytes = [0x09];
+  else if (key === 'shift-tab') bytes = [0x1b, 0x5b, 0x5a];
   else if (key === 'enter') bytes = [0x0d];
+  else if (key === 'space') bytes = [0x20];
+  else if (key === 'pipe') bytes = [0x7c];
+  else if (key === 'hyphen') bytes = [0x2d];
+  else if (key === 'install-reasonix') {
+    const cmd = 'npm i -g reasonix code && reasonix setup\r';
+    ws.send(new TextEncoder().encode(cmd));
+    return;
+  }
   else if (key === 'arrow-up') bytes = [0x1b, 0x5b, 0x41];
   else if (key === 'arrow-down') bytes = [0x1b, 0x5b, 0x42];
   else if (key === 'arrow-left') bytes = [0x1b, 0x5b, 0x44];
@@ -828,6 +845,21 @@ document.addEventListener('click', function(e) {
     panel.classList.remove('show');
   }
 });
+
+// ── 键盘弹出时固定 FAB 位置 ──
+(function() {
+  const fab = document.getElementById('fab');
+  const panel = document.getElementById('fab-panel');
+  if (!window.visualViewport) return;
+  function fixPos() {
+    const vv = window.visualViewport;
+    const midY = vv.height / 2;
+    fab.style.top = (midY - 24 + vv.offsetTop) + 'px';
+    panel.style.top = (midY - 60 + vv.offsetTop) + 'px';
+  }
+  window.visualViewport.addEventListener('resize', fixPos);
+  setTimeout(fixPos, 500);
+})();
 
 // ── 集群面板 ──
 let _listTimer = null;
