@@ -255,6 +255,9 @@ wsstunnel relay --port 8080 --token mysecret --quiet
 | `--cert` | — | TLS 证书路径（提供后启用 wss://） |
 | `--key` | — | TLS 私钥路径，未指定时使用 --cert |
 | `--wxpush` | — | 微信推送通知，格式 `url:key`。后端上线/下线时发送通知 |
+| `--token-file` | — | Token JSON 文件路径（支持多 token + 角色 + 过期） |
+| `--allow-ip` | — | IP 白名单（支持 CIDR，可多次指定） |
+| `--deny-cmd` | — | 命令黑名单（如 `--deny-cmd rm`） |
 | `--verbose` | — | 输出 DEBUG 级别日志 |
 | `--quiet` | — | 仅输出 WARNING 及以上日志 |
 
