@@ -866,6 +866,13 @@ class RelayState:
         except Exception as e:
             logger.exception(f"Handler error: {e}")
         finally:
+            # 释放 IP 连接计数（认证失败/超时连接也要释放配额）
+            info = self._client_info.get(websocket)
+            if info:
+                ip = info.get("ip", "")
+                if ip in self._max_per_ip:
+                    self._max_per_ip[ip] = max(0, self._max_per_ip[ip] - 1)
+            self._client_info.pop(websocket, None)
             # 清理断开的连接
             for n, ws in list(self.backends.items()):
                 if ws == websocket:
