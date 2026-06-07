@@ -393,6 +393,11 @@ class RelayState:
         self.brute_force = BruteForceGuard()
         self.deny_list = DenyList()
         self._client_info: dict[Any, dict] = {}
+        # 连接限制
+        self._max_frontends = 100
+        self._max_per_ip: dict[str, int] = {}
+        self._max_connections_per_ip = 10
+        self._max_file_size = 500 * 2 ** 20  # 500MB
 
     def _next_backend_name(self) -> str:
         """生成自动后端名称 ``backend-N``。"""
@@ -527,6 +532,12 @@ class RelayState:
                 info.get("id", "?"), info.get("ip", "?"),
                 time.time() - info.get("connected_at", time.time()),
             )
+        # 释放 IP 连接计数
+        info = self._client_info.get(ws)
+        if info:
+            ip = info.get("ip", "")
+            if ip in self._max_per_ip:
+                self._max_per_ip[ip] = max(0, self._max_per_ip[ip] - 1)
         self.frontends.discard(ws)
         self.frontend_targets.pop(ws, None)
         self.frontend_text_modes.pop(ws, None)
@@ -579,7 +590,34 @@ class RelayState:
             return
 
         # 文件传输: 需要至少 FILE 角色
-        if msg.startswith("__FILE_BEGIN:") or msg.startswith("__FILE_CHUNK:"):
+        if msg.startswith("__FILE_BEGIN:"):
+            try:
+                # __FILE_BEGIN:{b64path}:{size}
+                size_str = msg.split(":", 2)[2]
+                file_size = int(size_str)
+                if file_size > self._max_file_size:
+                    await ws.send(
+                        f"__FILE_ERROR::File too large "
+                        f"({file_size} > {self._max_file_size} bytes)"
+                    )
+                    self.audit.permission_denied(
+                        info.get("id", "?"), info.get("ip", "?"),
+                        "file_too_large", role,
+                    )
+                    return
+            except (IndexError, ValueError):
+                pass
+            if role < Role.FILE:
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"), "file_upload", role
+                )
+                await ws.send("__FILE_ERROR::Permission denied: file operations require file role")
+                return
+            self.audit.file_upload(
+                info.get("id", "?"), msg.split(":", 2)[1] if ":" in msg else "?",
+                0, role,
+            )
+        if msg.startswith("__FILE_CHUNK:"):
             if role < Role.FILE:
                 self.audit.permission_denied(
                     info.get("id", "?"), info.get("ip", "?"), "file_upload", role
@@ -730,6 +768,17 @@ class RelayState:
             logger.info(f"Security: rejected connection from {peer_ip} (rate limited)")
             await websocket.close(1008, "Too many attempts, try later")
             return
+        # ── 连接数限制 ──
+        if len(self.frontends) >= self._max_frontends:
+            logger.info(f"Security: rejected connection (max frontends reached)")
+            await websocket.close(1008, "Server full")
+            return
+        ip_count = self._max_per_ip.get(peer_ip, 0)
+        if ip_count >= self._max_connections_per_ip:
+            logger.info(f"Security: rejected connection from {peer_ip} (too many connections)")
+            await websocket.close(1008, "Too many connections from your IP")
+            return
+        self._max_per_ip[peer_ip] = ip_count + 1
 
         # ── URL token 自动认证 ──
         url_token = self._extract_url_token(websocket)
@@ -871,6 +920,7 @@ async def _run_async(
         ping_timeout=None,
         process_request=_http_request_handler,
         compression="deflate" if compression else None,
+        max_size=2 ** 20,  # 1MB max message
     ):
         scheme = "wss" if ssl_context else "ws"
         http_scheme = "https" if ssl_context else "http"
