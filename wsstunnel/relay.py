@@ -26,6 +26,7 @@ wsstunnel/relay.py — WebSocket 中继服务（VPS 端）
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -38,6 +39,17 @@ import httpx
 import websockets
 from websockets.http import Headers
 from websockets.server import Response
+
+from .security import (
+    AuditLogger,
+    BruteForceGuard,
+    DenyList,
+    IPAllowList,
+    PermissionError_,
+    Role,
+    TokenManager,
+    require_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -374,6 +386,13 @@ class RelayState:
         self.frontend_targets: dict[Any, str | None] = {}
         self.frontend_text_modes: dict[Any, bool] = {}
         self._counter: int = 0
+        # 安全组件
+        self.token_manager = TokenManager(token)
+        self.audit = AuditLogger()
+        self.ip_allowlist = IPAllowList()
+        self.brute_force = BruteForceGuard()
+        self.deny_list = DenyList()
+        self._client_info: dict[Any, dict] = {}
 
     def _next_backend_name(self) -> str:
         """生成自动后端名称 ``backend-N``。"""
@@ -470,11 +489,25 @@ class RelayState:
 
     # ── 前端注册/注销 ──
 
-    async def _register_frontend(self, ws: Any) -> None:
+    async def _register_frontend(
+        self, ws: Any, token_info: Any = None, peer_ip: str = "0.0.0.0"
+    ) -> None:
         """注册前端连接并进入消息循环。"""
+        client_id = getattr(token_info, "id", "unknown") if token_info else "unknown"
+        role = getattr(token_info, "role", Role.ADMIN) if token_info else Role.ADMIN
+        self._client_info[ws] = {
+            "id": client_id,
+            "ip": peer_ip,
+            "role": role,
+            "connected_at": time.time(),
+        }
         self.frontends.add(ws)
         self.frontend_targets[ws] = None
-        logger.info(f"Frontend authenticated (total {len(self.frontends)})")
+        logger.info(
+            f"Frontend authenticated: id={client_id} role={role} ip={peer_ip} "
+            f"(total {len(self.frontends)})"
+        )
+        self.audit.connect(client_id, peer_ip, role, client_id)
         await _send_backend_list(
             ws, self.backends, self.backend_modes, None,
             self.backend_connected_at,
@@ -488,6 +521,12 @@ class RelayState:
 
     def _unregister_frontend(self, ws: Any) -> None:
         """注销前端连接。"""
+        info = self._client_info.pop(ws, {})
+        if info:
+            self.audit.disconnect(
+                info.get("id", "?"), info.get("ip", "?"),
+                time.time() - info.get("connected_at", time.time()),
+            )
         self.frontends.discard(ws)
         self.frontend_targets.pop(ws, None)
         self.frontend_text_modes.pop(ws, None)
@@ -500,44 +539,81 @@ class RelayState:
 
         根据消息内容路由到对应的子处理方法。
         """
-        # 二进制帧：原始按键输入，转发给当前后端
+        info = self._client_info.get(ws, {})
+        role: Role = info.get("role", Role.READONLY)
+
+        # 二进制帧：原始按键输入 → 需要 ADMIN
         if isinstance(message, bytes):
+            if role < Role.ADMIN:
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"), "binary_input", role
+                )
+                return
             await self._forward_binary_to_backend(ws, message)
             return
 
         msg = message.strip()
 
-        # LIST: 列举后端
+        # LIST / USE: 所有角色可用
         if msg.upper() == "LIST":
             await self._handle_list(ws)
             return
-
-        # USE [name]: 切换/查看当前后端
         if msg.upper() == "USE" or msg.upper().startswith("USE "):
             await self._handle_use(ws, msg)
             return
 
-        # __RESIZE / __SIGNAL / __TEXT: 控制命令
+        # __RESIZE / __SIGNAL / __TEXT / __RAW: 需要 ADMIN
         if msg.startswith("__RESIZE:") or msg.startswith("__SIGNAL:"):
+            if role < Role.ADMIN:
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"), "control", role
+                )
+                return
             await self._handle_control(ws, msg)
             return
-
-        # __TEXT: 切换文本模式（剥离 ANSI 转义码）
-        if msg == "__TEXT":
-            self.frontend_text_modes[ws] = True
-            await ws.send("[Info] Text mode enabled (ANSI stripped)")
-            return
-        if msg == "__RAW":
-            self.frontend_text_modes[ws] = False
-            await ws.send("[Info] Raw mode enabled (binary PTY)")
+        if msg in ("__TEXT", "__RAW"):
+            self.frontend_text_modes[ws] = msg == "__TEXT"
+            await ws.send(
+                f"[Info] {'Text' if msg == '__TEXT' else 'Raw'} mode enabled"
+            )
             return
 
-        # @name <cmd>: 临时发给指定后端
+        # 文件传输: 需要至少 FILE 角色
+        if msg.startswith("__FILE_BEGIN:") or msg.startswith("__FILE_CHUNK:"):
+            if role < Role.FILE:
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"), "file_upload", role
+                )
+                await ws.send("__FILE_ERROR::Permission denied: file operations require file role")
+                return
+            self.audit.file_upload(
+                info.get("id", "?"), msg.split(":", 2)[1] if ":" in msg else "?",
+                0, role,
+            )
+        if msg.startswith("__FILE_DOWNLOAD:"):
+            if role < Role.FILE:
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"), "file_download", role
+                )
+                return
+
+        # @name <cmd>: 需要 ADMIN
         if msg.startswith("@"):
+            if role < Role.ADMIN:
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"), "command", role
+                )
+                return
             await self._handle_at_cmd(ws, msg)
             return
 
-        # 普通命令: 发送给当前后端
+        # 普通命令: 需要 ADMIN，记录审计
+        if role < Role.ADMIN:
+            self.audit.permission_denied(
+                info.get("id", "?"), info.get("ip", "?"), "command", role
+            )
+            return
+        self.audit.command(info.get("id", "?"), msg[:100], role)
         await self._send_to_current_backend(ws, msg)
 
     async def _handle_list(self, ws: Any) -> None:
@@ -640,12 +716,30 @@ class RelayState:
         3. 后端消息转发循环
         4. 异常和连接清理
         """
+        # ── IP 白名单检查 ──
+        peer_ip = "0.0.0.0"
+        try:
+            peer_ip, _ = websocket.remote_address
+        except Exception:
+            pass
+        if not self.ip_allowlist.allow(peer_ip):
+            logger.info(f"Security: rejected connection from {peer_ip} (not in allowlist)")
+            await websocket.close(1008, "IP not allowed")
+            return
+        if self.brute_force.is_locked(peer_ip):
+            logger.info(f"Security: rejected connection from {peer_ip} (rate limited)")
+            await websocket.close(1008, "Too many attempts, try later")
+            return
+
         # ── URL token 自动认证 ──
         url_token = self._extract_url_token(websocket)
-        if url_token and self.token and url_token == self.token:
-            await websocket.send("AUTH_OK")
-            await self._register_frontend(websocket)
-            return
+        if url_token:
+            token_info = self.token_manager.validate(url_token)
+            if token_info:
+                self.brute_force.record_success(peer_ip)
+                await websocket.send("AUTH_OK")
+                await self._register_frontend(websocket, token_info, peer_ip)
+                return
 
         try:
             first = await asyncio.wait_for(websocket.recv(), timeout=30)
@@ -700,8 +794,17 @@ class RelayState:
 
             # ── 前端注册（AUTH 消息认证）──
             elif _is_frontend_auth(first, self.token):
+                token_str = first.replace("AUTH:", "").strip() if first.startswith("AUTH:") else ""
+                token_info = self.token_manager.validate(token_str) if token_str else None
+                if not token_info:
+                    self.brute_force.record_failure(peer_ip)
+                    self.audit.auth_failed(peer_ip, token_str[:8])
+                    await websocket.send("AUTH_FAIL")
+                    await websocket.close(1008, "Authentication failed")
+                    return
+                self.brute_force.record_success(peer_ip)
                 await websocket.send("AUTH_OK")
-                await self._register_frontend(websocket)
+                await self._register_frontend(websocket, token_info, peer_ip)
 
             else:
                 await websocket.send("AUTH_FAIL")
@@ -782,6 +885,9 @@ def run_relay(
     cert_path: str | None = None,
     key_path: str | None = None,
     wxpush: str | None = None,
+    token_file: str | None = None,
+    allow_ip: list[str] | None = None,
+    deny_cmd: list[str] | None = None,
 ) -> None:
     """启动 WebSocket 中继服务。
 
@@ -792,6 +898,9 @@ def run_relay(
         cert_path: TLS 证书路径。
         key_path: TLS 私钥路径。
         wxpush: 微信推送通知，格式 ``url:key``。
+        token_file: token JSON 文件路径（支持多 token + 角色 + 过期）。
+        allow_ip: IP 白名单列表（支持 CIDR）。
+        deny_cmd: 命令黑名单列表。
     """
     if token:
         logger.info(f"Authentication enabled (token={token[:8]}...)")
@@ -812,4 +921,26 @@ def run_relay(
         ssl_context = _create_ssl_context(cert_path, key_path or cert_path)
 
     state = RelayState(token, notifier)
+
+    # ── 安全组件配置 ──
+    if token_file:
+        try:
+            state.token_manager.load_file(token_file)
+        except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to load token file '{token_file}': {e}")
+            return
+    if allow_ip:
+        state.ip_allowlist = IPAllowList(allow_ip)
+        logger.info(f"IP allowlist enabled: {allow_ip}")
+    if deny_cmd:
+        state.deny_list = DenyList(deny_cmd)
+        logger.info(f"Command deny list enabled: {deny_cmd}")
+
+    if state.token_manager.enabled:
+        logger.info(
+            f"Security: {state.token_manager.count} token(s) loaded, "
+            f"IP allowlist={'on' if state.ip_allowlist.enabled else 'off'}, "
+            f"brute-force={'on' if state.brute_force else 'off'}"
+        )
+
     asyncio.run(_run_async(host, port, state.handler, ssl_context))

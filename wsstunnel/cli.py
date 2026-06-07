@@ -269,6 +269,18 @@ def get(
     "--wxpush", default=None,
     help="微信推送通知（后端上线/下线），格式 url:key",
 )
+@click.option(
+    "--token-file", default=None,
+    help="Token JSON 文件（支持多 token、角色、过期）",
+)
+@click.option(
+    "--allow-ip", default=None, multiple=True,
+    help="IP 白名单（支持 CIDR，可多次指定）",
+)
+@click.option(
+    "--deny-cmd", default=None, multiple=True,
+    help="命令黑名单（如 --deny-cmd rm）",
+)
 @click.option("--verbose", is_flag=True, default=False, help="详细日志 (DEBUG)")
 @click.option("--quiet", is_flag=True, default=False, help="静默模式，仅显示警告和错误")
 def relay(
@@ -278,12 +290,20 @@ def relay(
     cert: str | None,
     key: str | None,
     wxpush: str | None,
+    token_file: str | None,
+    allow_ip: tuple[str, ...],
+    deny_cmd: tuple[str, ...],
     verbose: bool,
     quiet: bool,
 ) -> None:
     """启动中继服务（VPS 端）"""
     _setup_logging(verbose, quiet)
-    run_relay(host, port, token, cert, key, wxpush)
+    run_relay(
+        host, port, token, cert, key, wxpush,
+        token_file=token_file,
+        allow_ip=list(allow_ip) if allow_ip else None,
+        deny_cmd=list(deny_cmd) if deny_cmd else None,
+    )
 
 
 @cli.command()
