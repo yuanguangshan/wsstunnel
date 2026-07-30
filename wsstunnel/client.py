@@ -214,11 +214,12 @@ def _handle_file_cmd(msg: str, ws: websocket.WebSocket) -> bool:
         if len(parts) < 3:
             return True
         try:
-            path = _resolve_path(_unb64(parts[1]))
+            raw = _unb64(parts[1])              # CHUNK/END/CANCEL 用原始路径作为查找键
+            path = _resolve_path(raw)           # 实际写入位置（相对路径解析到 shell CWD）
             total = int(parts[2])
             os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
             f = open(path, "wb")
-            _file_transfers[path] = {"file": f, "total": total, "received": 0}
+            _file_transfers[raw] = {"file": f, "total": total, "received": 0}
             # 确认收到（使用 __FILE_OK: 避免与下载的 __FILE_BEGIN: 混淆）
             ws.send(f"__FILE_OK:{parts[1]}:{total}")
             logger.info(f"File upload started: {path} ({total} bytes)")
@@ -333,9 +334,9 @@ def _send_file(path: str, ws: websocket.WebSocket) -> None:
         ws.send(f"__FILE_END:{b64_path}:{total}")
         logger.info(f"File download sent: {path} ({total} bytes, {idx} chunks)")
     except FileNotFoundError:
-        ws.send(f"__FILE_ERROR:{b64_path}:File not found")
+        ws.send(f"__FILE_ERROR:{b64_path}:File not found: {path}")
     except PermissionError:
-        ws.send(f"__FILE_ERROR:{b64_path}:Permission denied")
+        ws.send(f"__FILE_ERROR:{b64_path}:Permission denied: {path}")
     except Exception as e:
         ws.send(f"__FILE_ERROR:{b64_path}:{e}")
 
