@@ -5,6 +5,8 @@ wsstunnel/cli.py — 统一命令行入口
 通过 click 提供 relay 和 client 两个子命令。
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys

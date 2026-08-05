@@ -37,8 +37,23 @@ from urllib.parse import urlparse, parse_qs
 
 import httpx
 import websockets
-from websockets.http import Headers
-from websockets.server import Response
+
+# ── 兼容 websockets 10.x 和 11.0+ 的 API 差异 ──
+# 10.x: from websockets.http import Headers; from websockets.server import Response
+# 11.0+: websockets.http 模块移除，Headers 移至 websockets.datastructures
+#        websockets.server.Response 移除，Response 移至 websockets.http11
+try:
+    from websockets.http import Headers
+    from websockets.server import Response
+except ImportError:
+    from websockets.datastructures import Headers
+    from websockets.http11 import Response
+
+# 检测 websockets 版本，用于适配 handler 签名和 process_request 行为
+_WS_VERSION = tuple(
+    int(x) for x in websockets.__version__.split(".")[:2] if x.isdigit()
+)
+_WS_LEGACY = _WS_VERSION < (11, 0)  # 10.x 使用 legacy API
 
 from .security import (
     AuditLogger,
@@ -324,7 +339,6 @@ async def _send_backend_list(
                     uptime = f" ↑{elapsed // 3600}h{(elapsed % 3600) // 60}m"
             names.append(f"{n}({mode}){uptime}{marker}")
         lines = [f"[Info] Connected backends: {', '.join(names)}"]
-        lines = [f"[Info] Connected backends: {', '.join(names)}"]
         if current:
             lines.append(f"[Info] Current: {current}")
         await ws.send("\n".join(lines))
@@ -532,9 +546,7 @@ class RelayState:
                 info.get("id", "?"), info.get("ip", "?"),
                 time.time() - info.get("connected_at", time.time()),
             )
-        # 释放 IP 连接计数
-        info = self._client_info.get(ws)
-        if info:
+            # 释放 IP 连接计数
             ip = info.get("ip", "")
             if ip in self._max_per_ip:
                 self._max_per_ip[ip] = max(0, self._max_per_ip[ip] - 1)
