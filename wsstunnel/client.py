@@ -47,6 +47,37 @@ _key_buffer: str = ""
 # 真实 CWD 追踪：通过 /proc/<pid>/cwd 精确获取，不受隐式 cd 影响
 _shell_pid: int | None = None
 
+# PTY 按键缓冲上限：防止大段粘贴导致缓冲无限增长
+_KEY_BUFFER_MAX = 4096
+
+
+def _current_cwd() -> str:
+    """获取 shell 当前工作目录。
+
+    优先通过 /proc/<pid>/cwd 获取真实路径（不受 cd 别名、pushd、
+    二进制工具、proot/chroot 等隐式 CWD 变更影响），
+    回退到 __CWD: / PROMPT_COMMAND 追踪的 _cwd。
+    """
+    if _shell_pid is not None:
+        try:
+            real_cwd = os.readlink(f"/proc/{_shell_pid}/cwd")
+            if real_cwd:
+                return real_cwd
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
+    return _cwd
+
+
+def _resolve_path(path: str) -> str:
+    """解析上传/下载路径：相对路径自动拼接 shell 当前目录。"""
+    if path == "~":
+        return os.environ.get("HOME", "/")
+    if path.startswith("~/"):
+        return os.path.join(os.environ.get("HOME", "/"), path[2:])
+    if os.path.isabs(path):
+        return path
+    return os.path.normpath(os.path.join(_current_cwd(), path))
+
 
 def _update_cwd(cmd: str) -> None:
     """根据 shell 命令更新追踪的当前工作目录。"""
@@ -126,16 +157,39 @@ def _send_signal(shell_proc: subprocess.Popen, sig_name: str) -> None:
 def _terminate_process(proc: subprocess.Popen, timeout: float = 5.0) -> None:
     """优雅终止子进程：先 SIGTERM，超时后 SIGKILL。
 
-    Args:
-        proc: 要终止的子进程。
-        timeout: SIGTERM 后等待退出的秒数。
+    若子进程是独立进程组长（PTY 模式经 ``setsid`` 创建），向整个进程组
+    发信号以清掉 shell 的子进程；否则仅终止子进程自身，避免误杀同组
+    的客户端进程。
     """
     try:
-        proc.terminate()
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    is_group_leader = pgid == proc.pid
+
+    def _sig(sig: signal.Signals) -> None:
+        if is_group_leader:
+            try:
+                os.killpg(pgid, sig)
+                return
+            except (ProcessLookupError, PermissionError):
+                pass
+        try:
+            proc.send_signal(sig)
+        except ProcessLookupError:
+            pass
+
+    _sig(signal.SIGTERM)
+    try:
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    _sig(signal.SIGKILL)
+    try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+        pass
 
 
 # ──────────────────────────────────────────────
@@ -171,37 +225,6 @@ def _b64(s: str) -> str:
 def _unb64(s: str) -> str:
     """Base64 解码为字符串。"""
     return base64.b64decode(s).decode()
-
-
-def _resolve_path(path: str) -> str:
-    """解析上传/下载路径：相对路径自动拼接 shell 当前目录。
-
-    优先通过 /proc/<pid>/cwd 获取真实路径（不受 cd 别名、pushd、
-    二进制工具、proot/chroot 等隐式 CWD 变更影响）。
-    回退到 __CWD: / PROMPT_COMMAND 追踪的 _cwd。
-    """
-    if path.startswith("./") or path.startswith("~"):
-        base = _cwd
-        # 尝试从 /proc 获取真实 CWD
-        try:
-            if _shell_pid is not None:
-                real_cwd = os.readlink(f"/proc/{_shell_pid}/cwd")
-                if real_cwd:
-                    base = real_cwd
-        except (FileNotFoundError, PermissionError, OSError):
-            pass
-        return os.path.normpath(os.path.join(base, path))
-    if not os.path.isabs(path):
-        base = _cwd
-        try:
-            if _shell_pid is not None:
-                real_cwd = os.readlink(f"/proc/{_shell_pid}/cwd")
-                if real_cwd:
-                    base = real_cwd
-        except (FileNotFoundError, PermissionError, OSError):
-            pass
-        return os.path.normpath(os.path.join(base, path))
-    return path
 
 
 def _handle_file_cmd(msg: str, ws: websocket.WebSocket) -> bool:
@@ -392,6 +415,7 @@ def run_client(
             )
             break
         reconnect_event = threading.Event()
+        ws: websocket.WebSocket | None = None
         try:
             ws = websocket.WebSocket(
                 sslopt={"cert_reqs": ssl.CERT_NONE} if insecure else None,
@@ -444,6 +468,12 @@ def run_client(
                 f"Client error: {e}, reconnecting in {delay}s "
                 f"(attempt {attempt})"
             )
+            # 关闭半开/异常的旧连接，避免 fd 泄漏
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
             time.sleep(delay)
         else:
             # _run_*mode 正常返回 ≠ 连接健康
@@ -552,6 +582,9 @@ def _run_pty_mode(
                         # 只缓冲可打印字符和回车/换行
                         elif ch.isprintable() or ch in ("\r", "\n", "\x7f"):
                             _key_buffer += ch
+                            # 上限截断保留尾部：防大段粘贴撑爆缓冲
+                            if len(_key_buffer) > _KEY_BUFFER_MAX:
+                                _key_buffer = _key_buffer[-_KEY_BUFFER_MAX:]
                         if ch in ("\r", "\n"):
                             line = _key_buffer.replace("\r", "").replace("\n", "").strip()
                             _key_buffer = ""
