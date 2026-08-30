@@ -55,6 +55,43 @@ def _b64(s: str) -> str:
     return base64.b64encode(s.encode()).decode()
 
 
+def _recv_until(ws: "websocket.WebSocket", pred, timeout: float = 120.0,
+                fatal_error: bool = True) -> str:
+    """循环接收直到 ``pred(msg)`` 命中，返回该消息。
+
+    relay 会在认证后立即推送 ``[Info] Connected backends...`` 等人类可读
+    消息，可能排在协议确认之前；此前 ``put`` 直接对第一条 recv 判定，
+    导致误报 ``Upload rejected``。这里跳过所有非协议消息：
+    - ``[Info] ...``：静默跳过
+    - ``[Error] ...``：默认视为致命错误抛出（``fatal_error=False`` 时交给 pred）
+    """
+    ws.settimeout(timeout)
+    try:
+        while True:
+            msg = ws.recv()
+            if fatal_error and msg.startswith("[Error]"):
+                raise RuntimeError(f"Relay error: {msg}")
+            if pred(msg):
+                return msg
+    finally:
+        ws.settimeout(120.0)
+
+
+def _use_backend(ws: "websocket.WebSocket", backend: str) -> None:
+    """切换后端并等待确认（收到 Switched 即止，不靠超时排空）。"""
+    ws.send(f"USE {backend}")
+    resp = _recv_until(
+        ws,
+        lambda m: m.startswith("[Info] Switched") or m.startswith("[Error]"),
+        timeout=5.0,
+        fatal_error=False,
+    )
+    if resp.startswith("[Error]"):
+        ws.close()
+        raise RuntimeError(f"Switch to backend '{backend}' failed: {resp}")
+    click.echo(f"Switched to backend: {backend}")
+
+
 def _connect_frontend(server: str, token: str | None, insecure: bool) -> "websocket.WebSocket":
     """连接中继并认证为前端，返回 WebSocket 连接。"""
     import ssl as ssl_mod
@@ -112,7 +149,6 @@ def put(
     import os
     import base64
     import websocket
-    import time
 
     if not remote_path:
         remote_path = os.path.basename(local_path)
@@ -125,22 +161,13 @@ def put(
 
     # USE 指定后端
     if backend:
-        ws.send(f"USE {backend}")
-        click.echo(f"Switched to backend: {backend}")
-        time.sleep(0.3)
-        # 清空确认消息
-        try:
-            while True:
-                ws.recv()
-        except Exception:
-            pass
-        ws.settimeout(120)
+        _use_backend(ws, backend)
 
     click.echo(f"Uploading {local_path} ({file_size} bytes) → {remote_path}...")
 
     ws.send(f"__FILE_BEGIN:{b64_remote}:{file_size}")
-    # 等确认（后端回复 __FILE_OK: 表示接受上传）
-    resp = ws.recv()
+    # 等确认（后端回复 __FILE_OK: 表示接受上传）；跳过 [Info] 等噪声消息
+    resp = _recv_until(ws, lambda m: m.startswith("__FILE_"))
     if not resp.startswith("__FILE_OK:"):
         ws.close()
         raise RuntimeError(f"Upload rejected: {resp}")
@@ -160,8 +187,11 @@ def put(
             click.echo(f"  Progress: {sent}/{file_size} bytes ({100*sent//file_size}%)", nl=False)
             click.echo("\r", nl=False)
 
-    ws.send(f"__FILE_END:{b64_remote}")
-    resp = ws.recv()
+    # END 帧携带总字节数，与 client.py 的 _send_file 协议保持一致
+    ws.send(f"__FILE_END:{b64_remote}:{sent}")
+    resp = _recv_until(
+        ws, lambda m: m.startswith(("__FILE_DONE:", "__FILE_ERROR:"))
+    )
     ws.close()
 
     if resp.startswith("__FILE_DONE:"):
@@ -205,56 +235,53 @@ def get(
     ws = _connect_frontend(server, token, insecure)
 
     if backend:
-        ws.send(f"USE {backend}")
-        import time
-        time.sleep(0.3)
-        try:
-            while True:
-                ws.recv()
-        except Exception:
-            pass
-        ws.settimeout(120)
+        _use_backend(ws, backend)
 
     click.echo(f"Downloading {remote_path} → {local_path}...")
     ws.send(f"__FILE_DOWNLOAD:{b64_remote}")
 
-    chunks: dict[int, bytes] = {}
+    # 流式落盘：分块按序直接写入临时文件，避免大文件整体占用内存；
+    # 完成后原子重命名，失败不留半截文件
     total_size = 0
     received = 0
+    part_path = local_path + ".part"
+    os.makedirs(os.path.dirname(os.path.abspath(local_path)) or ".", exist_ok=True)
 
-    while True:
-        resp = ws.recv()
-        if resp.startswith("__FILE_BEGIN:"):
-            _, _, size_str = resp.partition(":")
-            _, size_str = size_str.rsplit(":", 1)
-            total_size = int(size_str)
-            click.echo(f"  Size: {total_size} bytes")
-        elif resp.startswith("__FILE_CHUNK:"):
-            parts = resp.split(":", 3)
-            idx = int(parts[2])
-            data = base64.b64decode(parts[3])
-            chunks[idx] = data
-            received += len(data)
-            click.echo(f"  Progress: {received}/{total_size} bytes")
-        elif resp.startswith("__FILE_END:"):
-            break
-        elif resp.startswith("__FILE_ERROR:"):
-            _, _, msg = resp.partition(":")
-            _, _, msg = msg.partition(":")
-            ws.close()
-            raise RuntimeError(f"Download failed: {msg}")
-        else:
-            click.echo(f"  (ignored: {resp[:60]})")
+    with open(part_path, "wb") as f:
+        while True:
+            resp = ws.recv()
+            if resp.startswith("__FILE_BEGIN:"):
+                _, _, size_str = resp.partition(":")
+                _, size_str = size_str.rsplit(":", 1)
+                total_size = int(size_str)
+                click.echo(f"  Size: {total_size} bytes")
+            elif resp.startswith("__FILE_CHUNK:"):
+                parts = resp.split(":", 3)
+                data = base64.b64decode(parts[3])
+                f.write(data)
+                received += len(data)
+                click.echo(f"  Progress: {received}/{total_size} bytes", nl=False)
+                click.echo("\r", nl=False)
+            elif resp.startswith("__FILE_END:"):
+                break
+            elif resp.startswith("__FILE_ERROR:"):
+                _, _, msg = resp.partition(":")
+                _, _, msg = msg.partition(":")
+                ws.close()
+                f.close()
+                os.remove(part_path)
+                raise RuntimeError(f"Download failed: {msg}")
+            elif resp.startswith("[Error]"):
+                ws.close()
+                f.close()
+                os.remove(part_path)
+                raise RuntimeError(f"Download failed: {resp}")
+            # [Info] 等人类可读消息静默跳过
 
     ws.close()
+    os.replace(part_path, local_path)
 
-    # 按序写入
-    os.makedirs(os.path.dirname(os.path.abspath(local_path)) or ".", exist_ok=True)
-    with open(local_path, "wb") as f:
-        for idx in sorted(chunks):
-            f.write(chunks[idx])
-
-    click.echo(f"✅ Download complete: {local_path} ({received} bytes)")
+    click.echo(f"\n✅ Download complete: {local_path} ({received} bytes)")
 
 
 @cli.command()
