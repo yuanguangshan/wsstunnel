@@ -98,15 +98,28 @@ _INDEX_HTML = _load_index_html()
 async def _http_request_handler(connection: Any, request: Any) -> Response | None:
     """处理普通 HTTP 请求，返回 Web 终端页面。
 
-    在 ``process_request`` 回调中使用。返回 ``None`` 则继续 WebSocket 升级。
+    兼容两代 websockets API（``process_request`` 的参数形状不同）：
+
+    - legacy（websockets <=12 的默认 ``serve``）: ``(path: str, request_headers: Headers)``
+    - asyncio（websockets >=11，13 起为默认）: ``(connection, request: Request)``
+
+    返回 ``None`` 则继续 WebSocket 升级。
     """
+    # 鸭子类型区分：Request 对象有 .path，legacy 传入的 Headers 没有
+    path = getattr(request, "path", None)
+    if path is None:
+        # legacy: 第一个参数是 path 字符串，第二个是握手 Headers
+        path = connection
+        request_headers = request
+    else:
+        request_headers = request.headers
     if _INDEX_HTML is None:
         return None
     # 只拦截非 WebSocket 的 HTTP GET 请求
-    if request.headers.get("Upgrade", "").lower() == "websocket":
+    if request_headers.get("Upgrade", "").lower() == "websocket":
         return None
-    # request.path 包含 query string（如 /wstunnel?token=xxx），需去掉
-    clean_path = request.path.split("?")[0]
+    # path 可能包含 query string（如 /wstunnel?token=xxx），需去掉
+    clean_path = path.split("?")[0]
     if clean_path in ("/", "/index.html", "/wstunnel", "/wsstunnel"):
         headers = Headers()
         headers["Content-Type"] = "text/html; charset=utf-8"

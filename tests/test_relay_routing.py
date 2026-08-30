@@ -22,7 +22,12 @@ import websockets
 
 import wsstunnel.client as client_mod
 from wsstunnel.client import _resolve_path
-from wsstunnel.relay import RelayState, _BACKEND_NAME_RE, _forward_to_frontends
+from wsstunnel.relay import (
+    RelayState,
+    _BACKEND_NAME_RE,
+    _forward_to_frontends,
+    _http_request_handler,
+)
 from wsstunnel.security import BruteForceGuard, DenyList, Role, TokenInfo, TokenManager
 from wsstunnel.cli import _recv_until
 
@@ -320,6 +325,65 @@ class TestRecvUntil:
         assert _recv_until(
             ws, lambda m: m.startswith("[Error]"), timeout=5, fatal_error=False
         ) == "[Error] Backend 'x' not found"
+
+
+# ──────────────────────────────────────────────
+#  process_request 双代 API 兼容
+# ──────────────────────────────────────────────
+
+class TestHttpRequestHandlerCompat:
+    """websockets legacy (<=12 默认) 与 asyncio (>=13 默认) 两种参数形状。"""
+
+    async def _legacy_call(self, path: str):
+        from websockets.datastructures import Headers
+        # legacy serve: process_request(path: str, request_headers: Headers)
+        return await _http_request_handler(path, Headers())
+
+    async def _asyncio_call(self, path: str):
+        from websockets.datastructures import Headers
+
+        class FakeRequest:
+            def __init__(self):
+                self.path = path
+                self.headers = Headers()
+
+        # asyncio serve: process_request(connection, request: Request)
+        return await _http_request_handler(object(), FakeRequest())
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("call", ["_legacy_call", "_asyncio_call"])
+    async def test_index_page_served(self, call):
+        resp = await getattr(self, call)("/")
+        assert resp is not None
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("call", ["_legacy_call", "_asyncio_call"])
+    async def test_query_string_stripped(self, call):
+        assert (await getattr(self, call)("/?token=abc")) is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("call", ["_legacy_call", "_asyncio_call"])
+    async def test_websocket_upgrade_passes_through(self, call):
+        from websockets.datastructures import Headers
+
+        async def with_headers(headers):
+            if call == "_legacy_call":
+                return await _http_request_handler("/", headers)
+            else:
+                class FakeRequest:
+                    path = "/"
+                FakeRequest.headers = headers
+                return await _http_request_handler(object(), FakeRequest())
+
+        h = Headers()
+        h["Upgrade"] = "websocket"
+        assert await with_headers(h) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("call", ["_legacy_call", "_asyncio_call"])
+    async def test_unknown_path_passes_through(self, call):
+        assert (await getattr(self, call)("/favicon.ico")) is None
 
 
 # ──────────────────────────────────────────────
