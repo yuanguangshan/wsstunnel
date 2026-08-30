@@ -107,7 +107,8 @@ async def _http_request_handler(connection: Any, request: Any) -> Response | Non
     """
     # 鸭子类型区分：Request 对象有 .path，legacy 传入的 Headers 没有
     path = getattr(request, "path", None)
-    if path is None:
+    legacy = path is None
+    if legacy:
         # legacy: 第一个参数是 path 字符串，第二个是握手 Headers
         path = connection
         request_headers = request
@@ -123,6 +124,9 @@ async def _http_request_handler(connection: Any, request: Any) -> Response | Non
     if clean_path in ("/", "/index.html", "/wstunnel", "/wsstunnel"):
         headers = Headers()
         headers["Content-Type"] = "text/html; charset=utf-8"
+        if legacy:
+            # legacy 消费方执行 AbortHandshake(*resp)，要求三元组
+            return (200, headers, _INDEX_HTML)
         return Response(200, "OK", headers, _INDEX_HTML)
     return None
 

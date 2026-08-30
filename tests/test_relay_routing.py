@@ -355,7 +355,13 @@ class TestHttpRequestHandlerCompat:
     async def test_index_page_served(self, call):
         resp = await getattr(self, call)("/")
         assert resp is not None
-        assert resp.status_code == 200
+        if call == "_legacy_call":
+            # legacy: (status, headers, body) 三元组
+            status, headers, body = resp
+            assert status == 200
+            assert b"<" in body
+        else:
+            assert resp.status_code == 200
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("call", ["_legacy_call", "_asyncio_call"])
