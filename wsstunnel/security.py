@@ -7,6 +7,7 @@ wsstunnel/security.py — 轻量安全增强层
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
 import logging
@@ -108,16 +109,29 @@ class TokenManager:
         )
 
     def validate(self, token: str) -> TokenInfo | None:
-        """验证 token，返回 TokenInfo 或 None。"""
-        info = self._tokens.get(token)
-        if info is None:
+        """验证 token，返回 TokenInfo 或 None。
+
+        使用 ``hmac.compare_digest`` 做常数时间比较，避免时序侧信道；
+        过期时间同时兼容 naive 和 timezone-aware 的 ISO 格式。
+        """
+        matched: TokenInfo | None = None
+        token_bytes = token.encode("utf-8", "replace")
+        for known, info in self._tokens.items():
+            if hmac.compare_digest(known.encode("utf-8", "replace"), token_bytes):
+                matched = info
+                break
+        if matched is None:
             return None
-        if info.expires and datetime.now() > info.expires:
-            logger.info(
-                f"Security: token '{info.id}' expired (since {info.expires})"
-            )
-            return None
-        return info
+        expires = matched.expires
+        if expires:
+            # datetime.now(tz) 在 tz=None 时返回 naive 本地时间，
+            # 与 naive/aware 的 expires 都能安全比较（此前 aware 会 TypeError）
+            if datetime.now(expires.tzinfo) > expires:
+                logger.info(
+                    f"Security: token '{matched.id}' expired (since {expires})"
+                )
+                return None
+        return matched
 
     @property
     def enabled(self) -> bool:
@@ -136,7 +150,7 @@ class IPAllowList:
     """IP 白名单，支持 CIDR 和单个 IP。"""
 
     def __init__(self, networks: list[str] | None = None) -> None:
-        self._networks: list[ipaddress.IP_network] = []
+        self._networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
         if networks:
             for n in networks:
                 try:
@@ -164,7 +178,14 @@ class IPAllowList:
 # ──────────────────────────────────────────────
 
 class BruteForceGuard:
-    """简单防爆破：连续失败后延迟。"""
+    """简单防爆破：连续失败后延迟。
+
+    失败记录带时间戳并惰性过期清理，避免公网扫描器长期灌入
+    导致 ``_failures`` / ``_locked_until`` 无界增长。
+    """
+
+    _CLEANUP_INTERVAL = 60.0   # 清理扫描最小间隔秒数
+    _FAILURE_TTL = 600.0       # 失败记录无活动过期秒数
 
     def __init__(
         self,
@@ -173,14 +194,33 @@ class BruteForceGuard:
     ) -> None:
         self._max = max_attempts
         self._lockout = lockout_sec
-        self._failures: dict[str, int] = {}
+        self._failures: dict[str, tuple[int, float]] = {}  # ip -> (次数, 最后失败时间)
         self._locked_until: dict[str, float] = {}
+        self._last_cleanup: float = time.time()
+
+    def _cleanup_if_due(self, now: float) -> None:
+        """惰性清理过期的失败记录与已过期的封禁条目。"""
+        if now - self._last_cleanup < self._CLEANUP_INTERVAL:
+            return
+        self._last_cleanup = now
+        stale = [
+            ip for ip, (_, ts) in self._failures.items()
+            if now - ts > self._FAILURE_TTL
+        ]
+        for ip in stale:
+            self._failures.pop(ip, None)
+        expired = [ip for ip, until in self._locked_until.items() if until < now]
+        for ip in expired:
+            self._locked_until.pop(ip, None)
 
     def record_failure(self, ip: str) -> None:
         """记录一次失败。"""
         now = time.time()
-        self._failures[ip] = self._failures.get(ip, 0) + 1
-        if self._failures[ip] >= self._max:
+        self._cleanup_if_due(now)
+        count, _ = self._failures.get(ip, (0, 0.0))
+        count += 1
+        self._failures[ip] = (count, now)
+        if count >= self._max:
             self._locked_until[ip] = now + self._lockout
             logger.info(
                 f"Security: IP {ip} locked out for {self._lockout}s "

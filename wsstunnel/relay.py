@@ -26,6 +26,7 @@ wsstunnel/relay.py — WebSocket 中继服务（VPS 端）
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -48,12 +49,6 @@ try:
 except ImportError:
     from websockets.datastructures import Headers
     from websockets.http11 import Response
-
-# 检测 websockets 版本，用于适配 handler 签名和 process_request 行为
-_WS_VERSION = tuple(
-    int(x) for x in websockets.__version__.split(".")[:2] if x.isdigit()
-)
-_WS_LEGACY = _WS_VERSION < (11, 0)  # 10.x 使用 legacy API
 
 from .security import (
     AuditLogger,
@@ -121,6 +116,18 @@ async def _http_request_handler(connection: Any, request: Any) -> Response | Non
 
 # 匹配 ANSI 转义序列：ESC [ ... 最终字节，以及 ESC ] ... BEL/ST
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b\[[?][0-9;]*[a-zA-Z]")
+
+# 后端名合法字符集：字母/数字/下划线开头，可含点、连字符。
+# 名字会原样出现在 [Info] 文本与 Web 终端 DOM 中，必须限制字符集防注入。
+_BACKEND_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$")
+
+
+def _maybe_unb64(s: str) -> str:
+    """尝试 base64 解码（用于审计日志可读性），失败返回原文。"""
+    try:
+        return base64.b64decode(s).decode("utf-8", "replace")
+    except Exception:
+        return s
 
 
 def _strip_ansi(data: bytes) -> str:
@@ -230,6 +237,28 @@ def _is_frontend_auth(msg: str | bytes, token: str | None) -> bool:
 #  前端广播辅助函数
 # ──────────────────────────────────────────────
 
+async def _gather_send(frontends: set[Any], send_fn: Any) -> None:
+    """并发执行 ``send_fn(f)``，发送失败的连接从集合中清除。
+
+    - 迭代 ``list(frontends)`` 快照：避免遍历期间集合被并发注册/注销
+      修改触发 ``RuntimeError: Set changed size during iteration``。
+    - ``asyncio.gather`` 并发发送：避免慢前端 TCP 背压阻塞其他前端（队头阻塞）。
+    """
+    targets = list(frontends)
+    if not targets:
+        return
+    dead: set[Any] = set()
+
+    async def _send_one(f: Any) -> None:
+        try:
+            await send_fn(f)
+        except Exception:
+            dead.add(f)
+
+    await asyncio.gather(*(_send_one(f) for f in targets))
+    frontends -= dead
+
+
 async def _forward_to_frontends(
     frontends: set[Any],
     message: str,
@@ -245,13 +274,7 @@ async def _forward_to_frontends(
         tag: 可选标签，多后端时区分来源。
     """
     payload = f"[@{tag}] {message}" if tag else message
-    dead: set[Any] = set()
-    for f in frontends:
-        try:
-            await f.send(payload)
-        except Exception:
-            dead.add(f)
-    frontends -= dead
+    await _gather_send(frontends, lambda f: f.send(payload))
 
 
 async def _forward_to_frontends_untagged(
@@ -263,13 +286,7 @@ async def _forward_to_frontends_untagged(
     用于文件传输数据块等场景，避免标签乱掉协议格式。
     自动清理已断开的前端连接。
     """
-    dead: set[Any] = set()
-    for f in frontends:
-        try:
-            await f.send(message)
-        except Exception:
-            dead.add(f)
-    frontends -= dead
+    await _gather_send(frontends, lambda f: f.send(message))
 
 
 async def _forward_binary_to_frontends(
@@ -281,6 +298,7 @@ async def _forward_binary_to_frontends(
     """转发二进制帧给所有前端。
 
     文本模式前端会收到剥离 ANSI 转义码的文本帧，其余前端收到原始二进制帧。
+    ANSI 清洗只做一次，所有文本模式前端共享结果。
     自动清理已断开的前端连接。
 
     Args:
@@ -289,19 +307,16 @@ async def _forward_binary_to_frontends(
         frontend_text_modes: 前端连接 → 是否文本模式。
         tag: 保留参数，当前未使用。
     """
-    dead: set[Any] = set()
-    for f in frontends:
-        try:
-            if frontend_text_modes.get(f):
-                # 文本模式：剥离 ANSI，以文本帧发送
-                text = _strip_ansi(data)
-                if text:
-                    await f.send(text)
-            else:
-                await f.send(data)
-        except Exception:
-            dead.add(f)
-    frontends -= dead
+    text = _strip_ansi(data)  # 清洗一次，避免对每个前端重复计算
+
+    async def _send(f: Any) -> None:
+        if frontend_text_modes.get(f):
+            if text:
+                await f.send(text)
+        else:
+            await f.send(data)
+
+    await _gather_send(frontends, _send)
 
 
 async def _send_backend_list(
@@ -361,14 +376,12 @@ async def _broadcast_backend_list(
         backend_modes: 后端名称→模式映射。
         frontend_targets: 前端→当前后端名称映射。
     """
-    dead: set[Any] = set()
-    for f in frontends:
-        try:
-            current = frontend_targets.get(f)
-            await _send_backend_list(f, backends, backend_modes, current, backend_connected_at)
-        except Exception:
-            dead.add(f)
-    frontends -= dead
+
+    async def _send(f: Any) -> None:
+        current = frontend_targets.get(f)
+        await _send_backend_list(f, backends, backend_modes, current, backend_connected_at)
+
+    await _gather_send(frontends, _send)
 
 
 # ──────────────────────────────────────────────
@@ -407,6 +420,8 @@ class RelayState:
         self.brute_force = BruteForceGuard()
         self.deny_list = DenyList()
         self._client_info: dict[Any, dict] = {}
+        # 后台微信推送任务（保持引用防 GC，完成后自动移除）
+        self._notify_tasks: set[Any] = set()
         # 连接限制
         self._max_frontends = 100
         self._max_per_ip: dict[str, int] = {}
@@ -417,6 +432,25 @@ class RelayState:
         """生成自动后端名称 ``backend-N``。"""
         self._counter += 1
         return f"backend-{self._counter}"
+
+    def _notify(self, text: str) -> None:
+        """后台推送微信通知，不阻塞注册/注销主流程。"""
+        if self.notifier is None:
+            return
+        try:
+            task = asyncio.create_task(self.notifier.send(text))
+        except RuntimeError:
+            return  # 无运行中的事件循环（测试环境），跳过
+        self._notify_tasks.add(task)
+        task.add_done_callback(self._notify_tasks.discard)
+
+    def _release_ip_slot(self, ip: str) -> None:
+        """释放 IP 连接计数；归零后移除条目，避免长期运行内存增长。"""
+        remaining = self._max_per_ip.get(ip, 0) - 1
+        if remaining > 0:
+            self._max_per_ip[ip] = remaining
+        else:
+            self._max_per_ip.pop(ip, None)
 
     def _resolve_target(self, ws: Any) -> tuple[str, Any] | None:
         """解析前端当前的目标后端。
@@ -463,11 +497,8 @@ class RelayState:
             f"Backend registered: '{name}' mode={mode} "
             f"(total {len(self.backends)})"
         )
-        # 微信推送：后端上线
-        if self.notifier:
-            await self.notifier.send(
-                f"✅ wsstunnel: {name} 已上线 ({mode})"
-            )
+        # 微信推送：后端上线（后台发送，不阻塞注册与列表广播）
+        self._notify(f"✅ wsstunnel: {name} 已上线 ({mode})")
         # 通知所有前端后端列表变化
         await _broadcast_backend_list(
             self.frontends, self.backends, self.backend_modes,
@@ -475,8 +506,17 @@ class RelayState:
         )
         return name
 
-    async def _unregister_backend(self, name: str) -> None:
-        """注销后端连接并清理关联状态。"""
+    async def _unregister_backend(self, name: str, ws: Any = None) -> None:
+        """注销后端连接并清理关联状态。
+
+        Args:
+            name: 后端名称。
+            ws: 发起注销的连接。传入时做身份校验——若该名称已被新连接
+                顶替（重连场景），则跳过注销，避免误删新后端的注册。
+        """
+        if ws is not None and self.backends.get(name) is not ws:
+            logger.debug(f"Backend '{name}' already replaced, skip unregister")
+            return
         # 下线前先算运行时长
         elapsed = ""
         conn_time = self.backend_connected_at.get(name)
@@ -497,10 +537,7 @@ class RelayState:
             if self.frontend_targets.get(f) == name:
                 self.frontend_targets[f] = None
         logger.info(f"Backend disconnected: '{name}' (total {len(self.backends)})")
-        if self.notifier:
-            await self.notifier.send(
-                f"❌ wsstunnel: {name} 已下线{elapsed}"
-            )
+        self._notify(f"❌ wsstunnel: {name} 已下线{elapsed}")
         await _broadcast_backend_list(
             self.frontends, self.backends, self.backend_modes,
             self.frontend_targets, self.backend_connected_at,
@@ -548,8 +585,8 @@ class RelayState:
             )
             # 释放 IP 连接计数
             ip = info.get("ip", "")
-            if ip in self._max_per_ip:
-                self._max_per_ip[ip] = max(0, self._max_per_ip[ip] - 1)
+            if ip:
+                self._release_ip_slot(ip)
         self.frontends.discard(ws)
         self.frontend_targets.pop(ws, None)
         self.frontend_text_modes.pop(ws, None)
@@ -578,10 +615,11 @@ class RelayState:
         msg = message.strip()
 
         # LIST / USE: 所有角色可用
-        if msg.upper() == "LIST":
+        upper = msg.upper()
+        if upper == "LIST":
             await self._handle_list(ws)
             return
-        if msg.upper() == "USE" or msg.upper().startswith("USE "):
+        if upper == "USE" or upper.startswith("USE "):
             await self._handle_use(ws, msg)
             return
 
@@ -601,34 +639,42 @@ class RelayState:
             )
             return
 
-        # 文件传输: 需要至少 FILE 角色
+        # 文件传输协议: 需要至少 FILE 角色，检查通过后**显式转发给后端**。
+        # （此前依赖 fall-through 碰巧让 ADMIN 走到普通命令分支转发，
+        #   而 FILE 角色反而被末尾的 ADMIN 检查拦截——专属角色形同虚设。）
         if msg.startswith("__FILE_BEGIN:"):
-            try:
-                # __FILE_BEGIN:{b64path}:{size}
-                size_str = msg.split(":", 2)[2]
-                file_size = int(size_str)
-                if file_size > self._max_file_size:
-                    await ws.send(
-                        f"__FILE_ERROR::File too large "
-                        f"({file_size} > {self._max_file_size} bytes)"
-                    )
-                    self.audit.permission_denied(
-                        info.get("id", "?"), info.get("ip", "?"),
-                        "file_too_large", role,
-                    )
-                    return
-            except (IndexError, ValueError):
-                pass
+            parts = msg.split(":", 2)
+            file_size: int | None = None
+            if len(parts) == 3:
+                try:
+                    file_size = int(parts[2])
+                except ValueError:
+                    file_size = None
+            if file_size is not None and file_size > self._max_file_size:
+                await ws.send(
+                    f"__FILE_ERROR::File too large "
+                    f"({file_size} > {self._max_file_size} bytes)"
+                )
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"),
+                    "file_too_large", role,
+                )
+                return
             if role < Role.FILE:
                 self.audit.permission_denied(
                     info.get("id", "?"), info.get("ip", "?"), "file_upload", role
                 )
                 await ws.send("__FILE_ERROR::Permission denied: file operations require file role")
                 return
+            # 只在 BEGIN 记审计，CHUNK 不记（否则大文件每次传输产生上千条日志）
             self.audit.file_upload(
-                info.get("id", "?"), msg.split(":", 2)[1] if ":" in msg else "?",
-                0, role,
+                info.get("id", "?"),
+                _maybe_unb64(parts[1]) if len(parts) > 1 else "?",
+                file_size or 0, role,
             )
+            await self._send_to_current_backend(ws, msg)
+            return
+
         if msg.startswith("__FILE_CHUNK:"):
             if role < Role.FILE:
                 self.audit.permission_denied(
@@ -636,16 +682,21 @@ class RelayState:
                 )
                 await ws.send("__FILE_ERROR::Permission denied: file operations require file role")
                 return
-            self.audit.file_upload(
-                info.get("id", "?"), msg.split(":", 2)[1] if ":" in msg else "?",
-                0, role,
-            )
+            await self._send_to_current_backend(ws, msg)
+            return
+
         if msg.startswith("__FILE_DOWNLOAD:"):
             if role < Role.FILE:
                 self.audit.permission_denied(
                     info.get("id", "?"), info.get("ip", "?"), "file_download", role
                 )
                 return
+            path_b64 = msg.split(":", 1)[1] if ":" in msg else "?"
+            self.audit.file_download(
+                info.get("id", "?"), _maybe_unb64(path_b64), role
+            )
+            await self._send_to_current_backend(ws, msg)
+            return
 
         # @name <cmd>: 需要 ADMIN
         if msg.startswith("@"):
@@ -653,6 +704,15 @@ class RelayState:
                 self.audit.permission_denied(
                     info.get("id", "?"), info.get("ip", "?"), "command", role
                 )
+                return
+            # 命令黑名单对 @name 路由的命令同样生效
+            space = msg.find(" ")
+            target_cmd = msg[space + 1:] if space != -1 else ""
+            if self.deny_list.is_denied(target_cmd):
+                self.audit.permission_denied(
+                    info.get("id", "?"), info.get("ip", "?"), "denied_command", role
+                )
+                await ws.send("[Error] Command blocked by deny policy")
                 return
             await self._handle_at_cmd(ws, msg)
             return
@@ -662,6 +722,13 @@ class RelayState:
             self.audit.permission_denied(
                 info.get("id", "?"), info.get("ip", "?"), "command", role
             )
+            return
+        # ── 命令黑名单（--deny-cmd）──
+        if self.deny_list.is_denied(msg):
+            self.audit.permission_denied(
+                info.get("id", "?"), info.get("ip", "?"), "denied_command", role
+            )
+            await ws.send("[Error] Command blocked by deny policy")
             return
         self.audit.command(info.get("id", "?"), msg[:100], role)
         await self._send_to_current_backend(ws, msg)
@@ -810,6 +877,13 @@ class RelayState:
             backend_info = _parse_backend_auth(first, self.token)
             if backend_info:
                 name, mode = backend_info
+                # 后端名字符集校验：名字会进入 [Info] 文本与 Web 终端 DOM，
+                # 非法名字自动降级为自动命名，防注入（Web 端另有转义兜底）
+                if name is not None and not _BACKEND_NAME_RE.fullmatch(name):
+                    logger.warning(
+                        f"Security: invalid backend name rejected, auto-naming: {name[:32]!r}"
+                    )
+                    name = None
                 if name is None:
                     name = self._next_backend_name()
                 if name in self.backends:
@@ -821,6 +895,7 @@ class RelayState:
                         pass
                     self.backends.pop(name, None)
                     self.backend_modes.pop(name, None)
+                    self.backend_connected_at.pop(name, None)
                 actual_name = await self._register_backend(websocket, name, mode)
                 try:
                     async for message in websocket:
@@ -852,13 +927,17 @@ class RelayState:
                         )
                 except websockets.exceptions.ConnectionClosed:
                     pass
-                await self._unregister_backend(actual_name)
+                # 传入 websocket 做身份校验：重连顶替场景下旧 handler
+                # 醒来时名称已归属新连接，跳过注销避免误删新后端
+                await self._unregister_backend(actual_name, websocket)
 
             # ── 前端注册（AUTH 消息认证）──
             elif _is_frontend_auth(first, self.token):
                 token_str = first.replace("AUTH:", "").strip() if first.startswith("AUTH:") else ""
                 token_info = self.token_manager.validate(token_str) if token_str else None
-                if not token_info:
+                if token_info is None and self.token_manager.enabled:
+                    # 已启用认证却无有效 token → 拒绝；
+                    # 未启用认证（无 token 模式）→ 任何消息都放行（向后兼容）
                     self.brute_force.record_failure(peer_ip)
                     self.audit.auth_failed(peer_ip, token_str[:8])
                     await websocket.send("AUTH_FAIL")
@@ -883,14 +962,14 @@ class RelayState:
             info = self._client_info.get(websocket)
             if info:
                 ip = info.get("ip", "")
-                if ip in self._max_per_ip:
-                    self._max_per_ip[ip] = max(0, self._max_per_ip[ip] - 1)
+                if ip:
+                    self._release_ip_slot(ip)
             self._client_info.pop(websocket, None)
-            # 清理断开的连接
-            for n, ws in list(self.backends.items()):
-                if ws == websocket:
-                    self.backends.pop(n, None)
-                    self.backend_modes.pop(n, None)
+            # 异常路径的后端清理：按身份匹配（正常路径已注销，此处为空操作），
+            # 走完整注销流程（通知 + 广播），而非静默 pop
+            for n, bws in list(self.backends.items()):
+                if bws is websocket:
+                    await self._unregister_backend(n, websocket)
                     break
             self.frontends.discard(websocket)
             self.frontend_targets.pop(websocket, None)

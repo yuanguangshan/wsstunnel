@@ -887,6 +887,13 @@ document.addEventListener('click', function(e) {
 // ── 集群面板 ──
 let _listTimer = null;
 
+function escHtml(s) {
+  // HTML 转义：后端名来自远端客户端（不可信输入），插入 DOM 前必须转义
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 function renderCluster() {
   const tbody = document.getElementById('cluster-tbody');
   const cur = document.getElementById('cluster-current-select');
@@ -899,9 +906,9 @@ function renderCluster() {
     const name = clean.replace(/\s*\([^)]*\)$/, '');
     const mode = clean.match(/\(([^)]+)\)/)?.[1] || '?';
     return `<tr>
-      <td class="name">${current ? '<b>' : ''}${name}${current ? '</b>' : ''}</td>
-      <td class="mode">${mode}</td>
-      <td>${uptime || '—'}</td>
+      <td class="name">${current ? '<b>' : ''}${escHtml(name)}${current ? '</b>' : ''}</td>
+      <td class="mode">${escHtml(mode)}</td>
+      <td>${escHtml(uptime) || '—'}</td>
       <td><span class="status-dot online"></span></td>
     </tr>`;
   }).join('');
@@ -912,9 +919,9 @@ function renderCluster() {
     ? names[backends.findIndex(b => b.endsWith(' *'))]
     : names[0] || '';
   cur.innerHTML = names.map(n =>
-    `<option value="${n}" ${n === currentName ? 'selected' : ''}>${n}</option>`
+    `<option value="${escHtml(n)}" ${n === currentName ? 'selected' : ''}>${escHtml(n)}</option>`
   ).join('');
-  sel.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
+  sel.innerHTML = names.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
   document.getElementById('cluster-btn').classList.remove('hidden');
 
   // 恢复上次保存的后端选择
