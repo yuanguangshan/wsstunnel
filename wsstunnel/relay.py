@@ -94,6 +94,12 @@ def _load_index_html() -> bytes | None:
 
 _INDEX_HTML = _load_index_html()
 
+# 单帧上限（WebSocket 协议层 max_size）。与 client.py 的 _FILE_CHUNK_SIZE
+# 存在隐式约束：64KB 分块 Base64 后约 87KB，加协议头仍远低于 1MB，当前安全；
+# 若将来调大 _FILE_CHUNK_SIZE，需保证 b64(chunk) + 帧头 < _WS_MAX_FRAME，
+# 否则单帧超限会被静默断开且报错不直观（P2-3）。
+_WS_MAX_FRAME = 2 ** 20  # 1MB
+
 
 async def _http_request_handler(connection: Any, request: Any) -> Response | None:
     """处理普通 HTTP 请求，返回 Web 终端页面。
@@ -444,6 +450,11 @@ class RelayState:
         self._max_per_ip: dict[str, int] = {}
         self._max_connections_per_ip = 10
         self._max_file_size = 500 * 2 ** 20  # 500MB
+        # 后端心跳观测：name → 最近一次 __PING__ 时间（超时 watchdog 用）
+        self._backend_last_seen: dict[str, float] = {}
+        self._backend_timeout = 90.0     # 3 个心跳周期(30s)未 ping 判定半开
+        self._watch_interval = 15.0      # watchdog 扫描周期
+        self._heartbeat_watch_task: Any = None
 
     def _next_backend_name(self) -> str:
         """生成自动后端名称 ``backend-N``。"""
@@ -503,15 +514,29 @@ class RelayState:
 
     # ── 后端注册/注销 ──
 
-    async def _register_backend(self, ws: Any, name: str | None, mode: str) -> str:
-        """注册后端连接，返回实际使用的名称。"""
+    async def _register_backend(
+        self, ws: Any, name: str | None, mode: str, peer_ip: str = "0.0.0.0"
+    ) -> str:
+        """注册后端连接，返回实际使用的名称。
+
+        同时写入 ``_client_info``（与前端注册对称），否则后端断开时
+        finally 的 IP 连接计数释放路径找不到条目——计数只增不减，
+        直连 relay 的后端重连 10 次后会被自己的配额锁死（P0）。
+        """
         if not name:
             name = self._next_backend_name()
         self.backends[name] = ws
         self.backend_modes[name] = mode
         self.backend_connected_at[name] = time.time()
+        self._backend_last_seen[name] = time.time()
+        self._client_info[ws] = {
+            "id": name,
+            "ip": peer_ip,
+            "role": "backend",
+            "connected_at": time.time(),
+        }
         logger.info(
-            f"Backend registered: '{name}' mode={mode} "
+            f"Backend registered: '{name}' mode={mode} ip={peer_ip} "
             f"(total {len(self.backends)})"
         )
         # 微信推送：后端上线（后台发送，不阻塞注册与列表广播）
@@ -549,6 +574,14 @@ class RelayState:
         self.backends.pop(name, None)
         self.backend_modes.pop(name, None)
         self.backend_connected_at.pop(name, None)
+        self._backend_last_seen.pop(name, None)
+        # 释放该后端连接占用的 IP 计数（注册时写入 _client_info），
+        # 正常路径在此释放；异常路径由 handler finally 兜底，二者不重复
+        info = self._client_info.pop(ws, None) if ws is not None else None
+        if info:
+            ip = info.get("ip", "")
+            if ip:
+                self._release_ip_slot(ip)
         # 如果断开的后端正好是某个前端的当前目标，清除它
         for f in list(self.frontend_targets):
             if self.frontend_targets.get(f) == name:
@@ -630,6 +663,12 @@ class RelayState:
             return
 
         msg = message.strip()
+
+        # __PING__: 前端保活（CLI/Web 心跳防反代空闲超时切断），就地应答，
+        # 不转发给后端（否则会作为命令注入 shell）。所有角色可用。
+        if msg == "__PING__":
+            await ws.send("__PONG__")
+            return
 
         # LIST / USE: 所有角色可用
         upper = msg.upper()
@@ -839,6 +878,36 @@ class RelayState:
         else:
             await ws.send("[Error] No backends connected.")
 
+    # ── 后端心跳 watchdog ──
+
+    async def heartbeat_watchdog(self) -> None:
+        """定期扫描后端最近心跳时间，超时主动关闭半开连接。
+
+        协议层 ping 已关闭（ping_interval=None），relay 对后端心跳只被动
+        应答：若后端心跳线程静默死亡（不抛异常、不置位重连事件），这条
+        半开连接会一直挂在 ``LIST`` 里显示在线，实际发命令无响应，直到
+        TCP 层超时（小时级）。超过 ``_backend_timeout``（90s，3 个心跳
+        周期）未收到 ``__PING__`` 即主动 close，触发正常下线流程。
+        """
+        while True:
+            await asyncio.sleep(self._watch_interval)
+            now = time.time()
+            for name, last in list(self._backend_last_seen.items()):
+                if now - last <= self._backend_timeout:
+                    continue
+                self._backend_last_seen.pop(name, None)
+                ws = self.backends.get(name)
+                if ws is None:
+                    continue
+                logger.warning(
+                    f"Backend '{name}' heartbeat timeout "
+                    f"(no ping for {int(now - last)}s), closing"
+                )
+                try:
+                    await ws.close(1000, "heartbeat timeout")
+                except Exception:
+                    pass
+
     # ── 主 handler 入口 ──
 
     async def handler(self, websocket: Any, _path: object = None) -> None:
@@ -913,11 +982,12 @@ class RelayState:
                     self.backends.pop(name, None)
                     self.backend_modes.pop(name, None)
                     self.backend_connected_at.pop(name, None)
-                actual_name = await self._register_backend(websocket, name, mode)
+                actual_name = await self._register_backend(websocket, name, mode, peer_ip)
                 try:
                     async for message in websocket:
                         # ── 心跳（仅文本） ──
                         if isinstance(message, str) and message == "__PING__":
+                            self._backend_last_seen[actual_name] = time.time()
                             try:
                                 await websocket.send("__PONG__")
                             except Exception:
@@ -1019,6 +1089,7 @@ async def _run_async(
     handler: Any,
     ssl_context: ssl.SSLContext | None = None,
     compression: bool = False,
+    state: "RelayState | None" = None,
 ) -> None:
     """异步运行中继服务。
 
@@ -1028,23 +1099,31 @@ async def _run_async(
         handler: WebSocket 连接处理函数。
         ssl_context: 可选 SSL 上下文，启用 ``wss://``。
         compression: 是否启用 WebSocket permessage-deflate 压缩。
+        state: 可选 RelayState 实例；传入时启动后端心跳超时 watchdog。
     """
-    async with websockets.serve(
-        handler, host, port,
-        ssl=ssl_context,
-        ping_interval=None,
-        ping_timeout=None,
-        process_request=_http_request_handler,
-        compression="deflate" if compression else None,
-        max_size=2 ** 20,  # 1MB max message
-    ):
-        scheme = "wss" if ssl_context else "ws"
-        http_scheme = "https" if ssl_context else "http"
-        logger.info(f"Relay running on {scheme}://{host}:{port}")
-        if _INDEX_HTML:
-            logger.info(f"Web terminal: {http_scheme}://{host}:{port}")
-        logger.info("Heartbeat: disabled protocol ping (using __PING__/__PONG__ instead)")
-        await asyncio.Future()
+    watch_task = None
+    if state is not None:
+        watch_task = asyncio.create_task(state.heartbeat_watchdog())
+    try:
+        async with websockets.serve(
+            handler, host, port,
+            ssl=ssl_context,
+            ping_interval=None,
+            ping_timeout=None,
+            process_request=_http_request_handler,
+            compression="deflate" if compression else None,
+            max_size=_WS_MAX_FRAME,  # 见 _WS_MAX_FRAME 处的约束注释
+        ):
+            scheme = "wss" if ssl_context else "ws"
+            http_scheme = "https" if ssl_context else "http"
+            logger.info(f"Relay running on {scheme}://{host}:{port}")
+            if _INDEX_HTML:
+                logger.info(f"Web terminal: {http_scheme}://{host}:{port}")
+            logger.info("Heartbeat: disabled protocol ping (using __PING__/__PONG__ instead)")
+            await asyncio.Future()
+    finally:
+        if watch_task is not None:
+            watch_task.cancel()
 
 
 def run_relay(
@@ -1076,7 +1155,24 @@ def run_relay(
     if token:
         logger.info(f"Authentication enabled (token={token[:8]}...)")
     else:
-        logger.warning("No token set — anyone can connect!")
+        # 无 token = 任何人都能注册后端/前端（向后兼容取舍，P1-2）。
+        # 绑定到非回环地址时风险实际存在，用横幅级日志醒目提示。
+        exposed = host not in ("127.0.0.1", "localhost", "::1")
+        banner = (
+            "=" * 62,
+            "⚠️  SECURITY WARNING: running WITHOUT token authentication",
+            "   anyone who can reach this port becomes backend/frontend",
+            *(
+                ("   ⚠️  listening on non-loopback %s — EXPOSED" % host,)
+                if exposed
+                else ("   (listening on loopback %s, local only)" % host,)
+            ),
+            "   recommend: wsstunnel relay --token <secret> "
+            "or bind 127.0.0.1 behind a reverse proxy",
+            "=" * 62,
+        )
+        for line in banner:
+            logger.warning(line)
 
     notifier: _WxPushNotifier | None = None
     if wxpush:
@@ -1116,4 +1212,4 @@ def run_relay(
 
     if compression:
         logger.info("WebSocket compression enabled (permessage-deflate)")
-    asyncio.run(_run_async(host, port, state.handler, ssl_context, compression))
+    asyncio.run(_run_async(host, port, state.handler, ssl_context, compression, state))

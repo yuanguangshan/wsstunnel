@@ -420,11 +420,16 @@ function connect() {
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     setStatus('已连接', true);
     clearInterval(window._uptimeTimer);
+    clearInterval(window._pingTimer);   // 防重连后残留旧心跳
     window._uptimeTimer = setInterval(() => {
       const sec = Math.floor((Date.now() - _connectedAt) / 1000);
       const text = sec < 60 ? `已连接 ↑${sec}s` : sec < 3600 ? `已连接 ↑${Math.floor(sec/60)}m` : `已连接 ↑${Math.floor(sec/60/60)}h`;
       setStatus(text, true);
     }, 10000);
+    // 应用层保活心跳（25s < 常见反代 60s 空闲超时），防长连接被切断
+    window._pingTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send('__PING__');
+    }, 25000);
     // 连接成功后保存配置到 localStorage
     saveConfig(document.getElementById('server-url').value.trim(), token);
     initTerminal();
@@ -453,6 +458,7 @@ function connect() {
   ws.onclose = () => {
     clearInterval(window._uptimeTimer);
     clearInterval(window._listTimer);
+    clearInterval(window._pingTimer);
     setStatus('已断开');
 
     if (term) {

@@ -92,6 +92,31 @@ def _use_backend(ws: "websocket.WebSocket", backend: str) -> None:
     click.echo(f"Switched to backend: {backend}")
 
 
+def _start_frontend_heartbeat(ws: "websocket.WebSocket") -> None:
+    """启动前端保活线程（P2-2）。
+
+    前端长连接（大文件上传、用户离开）可能被反代默认 60s
+    proxy_read_timeout 切断；relay 已支持 ``__PING__``/``__PONG__``
+    应答。25s 间隔 < 60s 超时。失败即关闭连接，让主流程感知断开。
+    """
+    import threading
+    import time
+
+    def _hb() -> None:
+        while True:
+            time.sleep(25)
+            try:
+                ws.send("__PING__")
+            except Exception:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+                return
+
+    threading.Thread(target=_hb, daemon=True, name="wsstunnel-frontend-hb").start()
+
+
 def _connect_frontend(server: str, token: str | None, insecure: bool) -> "websocket.WebSocket":
     """连接中继并认证为前端，返回 WebSocket 连接。"""
     import ssl as ssl_mod
@@ -107,6 +132,7 @@ def _connect_frontend(server: str, token: str | None, insecure: bool) -> "websoc
         try:
             resp = ws.recv()
             if resp == "AUTH_OK":
+                _start_frontend_heartbeat(ws)
                 return ws
         except Exception:
             pass
@@ -120,9 +146,11 @@ def _connect_frontend(server: str, token: str | None, insecure: bool) -> "websoc
         if resp != "AUTH_OK":
             ws.close()
             raise RuntimeError(f"Authentication failed: {resp}")
+        _start_frontend_heartbeat(ws)
         return ws
 
     # 情况 3：无 token，纯明文连接
+    _start_frontend_heartbeat(ws)
     return ws
 
 

@@ -186,6 +186,7 @@ class BruteForceGuard:
 
     _CLEANUP_INTERVAL = 60.0   # 清理扫描最小间隔秒数
     _FAILURE_TTL = 600.0       # 失败记录无活动过期秒数
+    _LOCKOUT_MAX = 1800.0      # 锁定时长封顶 30 分钟
 
     def __init__(
         self,
@@ -214,17 +215,24 @@ class BruteForceGuard:
             self._locked_until.pop(ip, None)
 
     def record_failure(self, ip: str) -> None:
-        """记录一次失败。"""
+        """记录一次失败。
+
+        达到阈值后按**指数退避**锁定：连续触发时锁定时长每次翻倍
+        （3s → 6s → 12s → …，封顶 ``_LOCKOUT_MAX``）。固定 3s 锁定
+        形同虚设——攻击者稳态速率仍可达 1.67 次/秒。
+        """
         now = time.time()
         self._cleanup_if_due(now)
         count, _ = self._failures.get(ip, (0, 0.0))
         count += 1
         self._failures[ip] = (count, now)
         if count >= self._max:
-            self._locked_until[ip] = now + self._lockout
+            strikes = count - self._max          # 第 1 次锁定 strikes=0 → 3s
+            lockout = min(self._lockout * (2 ** strikes), self._LOCKOUT_MAX)
+            self._locked_until[ip] = now + lockout
             logger.info(
-                f"Security: IP {ip} locked out for {self._lockout}s "
-                f"(after {self._max} failures)"
+                f"Security: IP {ip} locked out for {lockout:.0f}s "
+                f"(after {count} failures)"
             )
 
     def record_success(self, ip: str) -> None:

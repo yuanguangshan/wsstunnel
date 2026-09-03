@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 _RECONNECT_MAX_DELAY = 300  # 最大重连间隔 5 分钟
 _HEARTBEAT_INTERVAL = 30    # 心跳间隔秒数
 _PIPE_READ_BUF = 4096       # 管道模式读取缓冲区大小
-_FILE_CHUNK_SIZE = 65536    # 文件传输每块大小（64KB）
+# 文件传输每块大小（64KB）。约束：b64(chunk)≈87KB + 帧头必须远小于
+# relay 侧 _WS_MAX_FRAME(1MB)，否则单帧超限被静默断开（P2-3）
+_FILE_CHUNK_SIZE = 65536
 
 # 正在进行的文件传输状态：path -> {file, total, received}
 _file_transfers: dict[str, dict] = {}
@@ -526,7 +528,8 @@ def _run_pty_mode(
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
-            close_fds=False,
+            # 不写 close_fds=False：pass_fds 会隐式强制 close_fds=True，
+            # 两者同写触发 RuntimeWarning "pass_fds overriding close_fds"（P2-1）
             pass_fds=(master_fd,),
             preexec_fn=os.setsid,
         )
