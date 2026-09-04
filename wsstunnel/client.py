@@ -420,7 +420,11 @@ def run_client(
         ws: websocket.WebSocket | None = None
         try:
             ws = websocket.WebSocket(
-                sslopt={"cert_reqs": ssl.CERT_NONE} if insecure else None,
+                # websocket-client 在 sslopt 未指定 cert_reqs 时默认
+                # CERT_NONE（不校验证书），必须显式开启校验
+                sslopt={"cert_reqs": ssl.CERT_NONE}
+                if insecure
+                else {"cert_reqs": ssl.CERT_REQUIRED},
                 enable_compression=compression,
             )
             ws.settimeout(60)

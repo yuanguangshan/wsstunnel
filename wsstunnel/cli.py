@@ -122,7 +122,11 @@ def _connect_frontend(server: str, token: str | None, insecure: bool) -> "websoc
     import ssl as ssl_mod
     import websocket
     ws = websocket.WebSocket(
-        sslopt={"cert_reqs": ssl_mod.CERT_NONE} if insecure else None,
+        # websocket-client 在 sslopt 未指定 cert_reqs 时默认
+        # CERT_NONE（不校验证书），必须显式开启校验
+        sslopt={"cert_reqs": ssl_mod.CERT_NONE}
+        if insecure
+        else {"cert_reqs": ssl_mod.CERT_REQUIRED},
     )
     ws.settimeout(120)
     ws.connect(server)
