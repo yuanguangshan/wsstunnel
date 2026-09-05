@@ -40,6 +40,24 @@ _FILE_CHUNK_SIZE = 65536
 # 正在进行的文件传输状态：path -> {file, total, received}
 _file_transfers: dict[str, dict] = {}
 
+
+def _abort_file_transfers() -> int:
+    """断连时中止所有进行中的上传：关闭句柄并清空登记表。
+
+    此前连接断开时进行中的上传句柄会一直挂着（文件保持打开、磁盘
+    占用直到进程退出），残留状态还会让后续同名上传拿不到干净起点。
+    返回中止的传输数量。
+    """
+    dropped = 0
+    for _raw, state in list(_file_transfers.items()):
+        try:
+            state["file"].close()
+            dropped += 1
+        except OSError:
+            pass
+    _file_transfers.clear()
+    return dropped
+
 # shell 当前工作目录追踪（拦截 cd 命令自动更新）
 _cwd: str = os.getcwd()
 
@@ -647,6 +665,8 @@ def _run_pty_mode(
                 os.close(master_fd)
             except OSError:
                 pass
+            # 断连时中止未完成的上传，关闭文件句柄（防句柄/磁盘泄漏）
+            _abort_file_transfers()
 
         if not reconnect_event.is_set():
             restart_count += 1

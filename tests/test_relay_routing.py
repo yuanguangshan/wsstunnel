@@ -413,7 +413,9 @@ class TestEndToEndRouting:
         server, url = await _serve(state)
         try:
             async with websockets.connect(url) as bk:
-                await bk.send("IAM_BACKEND::bk1:pipe")
+                # 安全契约（2026-09-06）：多 token 模式下后端注册必须携带
+                # 有效 token（旧允许空 token 的行为是可劫持会话的漏洞）
+                await bk.send("IAM_BACKEND:filer:bk1:pipe")
                 await asyncio.sleep(0.2)
                 async with websockets.connect(url + "?token=filer") as fw:
                     assert await asyncio.wait_for(fw.recv(), 3) == "AUTH_OK"

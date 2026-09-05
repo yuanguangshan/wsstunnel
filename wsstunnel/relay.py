@@ -200,7 +200,11 @@ class _WxPushNotifier:
 #  协议解析（纯函数，便于单元测试）
 # ──────────────────────────────────────────────
 
-def _parse_backend_auth(msg: str | bytes, token: str | None) -> tuple[str, str] | None:
+def _parse_backend_auth(
+    msg: str | bytes,
+    token: str | None,
+    **kwargs,
+) -> tuple[str, str] | None:
     """解析后端认证消息，返回 (name, mode) 元组，认证失败返回 ``None``。
 
     支持格式:
@@ -223,12 +227,44 @@ def _parse_backend_auth(msg: str | bytes, token: str | None) -> tuple[str, str] 
 
     msg = msg.strip()
 
-    prefix = f"IAM_BACKEND:{token}" if token else "IAM_BACKEND"
-    if not msg.startswith(prefix):
-        return None
+    # ── 后端身份判定（2026-09-06 加固）──
+    # 旧实现的两个洞：
+    #   1. --token-file 多 token 模式下 self.token 为 None，前缀退化为
+    #      "IAM_BACKEND"，任何人无 token 即可注册任意名字的后端，
+    #      从而劫持/窃听前端的按键与会话；
+    #   2. startswith 前缀匹配存在碰撞：token="abc" 时 "IAM_BACKEND:abcdef"
+    #      也能通过（知道前缀即可冒名）。
+    # 现在的规则：
+    #   - 单 token 模式：前缀必须精确到 "IAM_BACKEND:<token>"，且后随
+    #     空串或 ":"（消除前缀碰撞）；
+    #   - 多 token 模式（token_manager 提供）：消息第一段必须是任一
+    #     已注册 token（hmac 常数时间比较），否则视为非法注册。
+    token_manager = kwargs.get("token_manager")
+    token_enabled = bool(token) or (token_manager is not None and token_manager.enabled)
 
-    rest = msg[len(prefix):]
+    if token:
+        prefix = f"IAM_BACKEND:{token}"
+        if not msg.startswith(prefix):
+            return None
+        rest = msg[len(prefix):]
+        # 精确边界：后面必须是空或 ":"，防止 "IAM_BACKEND:abc" 吃掉 "abcdef"
+        if rest and not rest.startswith(":"):
+            return None
+    else:
+        if not msg.startswith("IAM_BACKEND"):
+            return None
+        rest = msg[len("IAM_BACKEND"):]
+
     parts = [p.strip() for p in rest.split(":") if p.strip()] if rest else []
+
+    # 多 token 模式：第一段必须是已注册 token，验证通过后剥离
+    if not token and token_manager is not None and token_manager.enabled:
+        if not parts:
+            return None
+        candidate = parts[0]
+        if token_manager.validate(candidate) is None:
+            return None
+        parts = parts[1:]
 
     mode = "pipe"
     if parts and parts[-1] in ("pty", "pipe"):
@@ -960,7 +996,7 @@ class RelayState:
             first = await asyncio.wait_for(websocket.recv(), timeout=30)
 
             # ── 后端注册 ──
-            backend_info = _parse_backend_auth(first, self.token)
+            backend_info = _parse_backend_auth(first, self.token, token_manager=self.token_manager)
             if backend_info:
                 name, mode = backend_info
                 # 后端名字符集校验：名字会进入 [Info] 文本与 Web 终端 DOM，
