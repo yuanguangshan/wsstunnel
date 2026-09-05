@@ -703,7 +703,10 @@ class RelayState:
         # __PING__: 前端保活（CLI/Web 心跳防反代空闲超时切断），就地应答，
         # 不转发给后端（否则会作为命令注入 shell）。所有角色可用。
         if msg == "__PING__":
-            await ws.send("__PONG__")
+            # 保活应答用 ping 控制帧而非文本 "__PONG__"：文本帧会被
+            # Web 终端/CLI 原样打印到用户屏幕（2026-09-06 修复的泄漏），
+            # ping 控制帧同样在反代上产生往返流量，防空闲切断
+            await ws.ping()
             return
 
         # LIST / USE: 所有角色可用
@@ -1025,7 +1028,9 @@ class RelayState:
                         if isinstance(message, str) and message == "__PING__":
                             self._backend_last_seen[actual_name] = time.time()
                             try:
-                                await websocket.send("__PONG__")
+                                # 应答用 ping 控制帧：文本 __PONG__ 曾被写进
+                                # 后端 PTY 出现在用户终端（协议帧泄漏）
+                                await websocket.ping()
                             except Exception:
                                 pass
                             continue

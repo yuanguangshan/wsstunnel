@@ -143,16 +143,16 @@ class TestHeartbeatWatchdog:
         state = RelayState(None)
 
         class PingProbe(TrackedWS):
-            """在 __PONG__ 应答瞬间快照 last_seen（注销前）。"""
+            """在 ping 控制帧应答瞬间快照 last_seen（注销前）。"""
 
             def __init__(self, messages):
                 super().__init__(messages)
                 self.last_seen_at_pong = None
 
-            async def send(self, message):
-                if message == "__PONG__":
-                    self.last_seen_at_pong = state._backend_last_seen.get("bkp")
-                await super().send(message)
+            async def ping(self, *a, **k):
+                # 2026-09-06 起 keepalive 应答为 ping 控制帧（非文本）
+                self.last_seen_at_pong = state._backend_last_seen.get("bkp")
+                return await super().ping(*a, **k)
 
         bw = PingProbe(["IAM_BACKEND:bkp:pty", "__PING__"])  # 无 token 格式: name:mode
         await state.handler(bw)
@@ -170,8 +170,18 @@ class TestFrontendPing:
     @pytest.mark.asyncio
     async def test_frontend_ping_answered_not_forwarded(self):
         state, fw, bw = _state_with_backend()
+        fw.ping_called = 0
+        _orig_ping = getattr(fw, "ping", None)
+
+        async def _ping(*a, **k):
+            fw.ping_called += 1
+            if _orig_ping:
+                return await _orig_ping(*a, **k)
+
+        fw.ping = _ping
         await state._handle_frontend_msg(fw, "__PING__")
-        assert "__PONG__" in fw.sent
+        # 2026-09-06：应答改为 ping 控制帧（文本 __PONG__ 会泄漏到终端）
+        assert fw.ping_called >= 1
         # 关键反例：PING 不得作为命令转发给后端 shell
         assert "__PING__" not in bw.sent
 
@@ -179,8 +189,17 @@ class TestFrontendPing:
     async def test_frontend_ping_allowed_for_readonly(self):
         from wsstunnel.security import Role
         state, fw, bw = _state_with_backend(Role.READONLY)
+        fw.ping_called = 0
+        _orig_ping = getattr(fw, "ping", None)
+
+        async def _ping(*a, **k):
+            fw.ping_called += 1
+            if _orig_ping:
+                return await _orig_ping(*a, **k)
+
+        fw.ping = _ping
         await state._handle_frontend_msg(fw, "__PING__")
-        assert "__PONG__" in fw.sent
+        assert fw.ping_called >= 1
 
 
 def _state_with_backend(role=None):
