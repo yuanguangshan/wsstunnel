@@ -228,3 +228,31 @@ def test_ws_max_frame_covers_file_chunk():
     import math
     b64_size = math.ceil(_FILE_CHUNK_SIZE / 3) * 4
     assert b64_size * 2 < _WS_MAX_FRAME  # 留 2 倍余量
+
+
+class TestAbortFileTransfers:
+    """断连清理：进行中的上传句柄必须被关闭并清空登记表。"""
+
+    def test_aborts_all_and_clears(self):
+        from wsstunnel import client as client_mod
+
+        closed = []
+        client_mod._file_transfers.clear()
+        client_mod._file_transfers["/tmp/a.txt"] = {
+            "file": type("F", (), {"close": staticmethod(lambda: closed.append("a"))})(),
+            "total": 1, "received": 0,
+        }
+        client_mod._file_transfers["/tmp/b.txt"] = {
+            "file": type("F", (), {"close": staticmethod(lambda: closed.append("b"))})(),
+            "total": 2, "received": 0,
+        }
+        dropped = client_mod._abort_file_transfers()
+        assert dropped == 2
+        assert closed == ["a", "b"]
+        assert client_mod._file_transfers == {}
+
+    def test_empty_table_noop(self):
+        from wsstunnel import client as client_mod
+
+        client_mod._file_transfers.clear()
+        assert client_mod._abort_file_transfers() == 0
