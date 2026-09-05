@@ -1035,6 +1035,11 @@ class RelayState:
                 await self._register_frontend(websocket, token_info, peer_ip)
 
             else:
+                # 错误 token 的前端 AUTH（AUTH:guess）与 token 不匹配的
+                # 后端注册（IAM_BACKEND:guess:...）都会落到这里。之前
+                # 此路径不计数，--token 模式的防爆破锁定形同虚设。
+                self.brute_force.record_failure(peer_ip)
+                self.audit.auth_failed(peer_ip, first[:8] if isinstance(first, str) else "<binary>")
                 await websocket.send("AUTH_FAIL")
                 await websocket.close(1008, "Authentication failed")
 
