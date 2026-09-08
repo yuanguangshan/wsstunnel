@@ -9,6 +9,12 @@ build/
 .venv/
 venv/
 
+# Testing artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # macOS
 .DS_Store
 
