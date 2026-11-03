@@ -94,6 +94,8 @@
     display: none;
     position: fixed; right: 14px;
     width: 40px; height: 40px; border-radius: 50%;
+    padding: 0; margin: 0;
+    -webkit-appearance: none; appearance: none;
     background: rgba(13, 40, 70, 0.30);
     border: 1px solid rgba(255,255,255,0.08);
     color: rgba(255,255,255,0.50);
@@ -104,6 +106,7 @@
     transition: opacity 0.2s;
     -webkit-tap-highlight-color: transparent;
     user-select: none; -webkit-user-select: none;
+    touch-action: manipulation;
   }
   #page-up { bottom: 238px; }   /* 主球上方 */
   #page-down { bottom: 126px; } /* 主球下方 */
@@ -285,8 +288,8 @@
 
 <!-- 移动端浮窗控制键 -->
 <!-- 主球上下的翻页键：几乎透明，点一下翻一页 -->
-<div id="page-up" title="向上翻页" aria-label="向上翻页">▲</div>
-<div id="page-down" title="向下翻页" aria-label="向下翻页">▼</div>
+<button type="button" id="page-up" title="向上翻页" aria-label="向上翻页">▲</button>
+<button type="button" id="page-down" title="向下翻页" aria-label="向下翻页">▼</button>
 <div id="fab">⌨</div>
 <div id="fab-panel">
   <div class="row">
@@ -952,10 +955,19 @@ document.getElementById('fab').addEventListener('click', function() {
 // 主球上下的半透明翻页键（移动端免开面板直接翻页）
 for (const [id, key] of [['page-up', 'page-up'], ['page-down', 'page-down']]) {
   const el = document.getElementById(id);
-  if (el) el.addEventListener('click', (e) => {
+  if (!el) continue;
+  let last = 0;
+  const fire = (e) => {
+    if (e.cancelable) e.preventDefault();
     e.stopPropagation();
+    const now = Date.now();
+    if (now - last < 350) return;   // touch 后浏览器又合成 click，只认第一次
+    last = now;
     fabSend(key);
-  });
+  };
+  // pointerdown 比 click 更早、不受 300ms 延迟与双击缩放影响，iOS/微信 X5 更可靠
+  el.addEventListener('pointerdown', fire, { passive: false });
+  el.addEventListener('click', fire);   // 老浏览器兜底
 }
 
 document.getElementById('fab-panel').addEventListener('click', function(e) {

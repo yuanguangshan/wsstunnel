@@ -820,6 +820,7 @@ FileNotFoundError: /bin/bash
 | v1.0.7 | 修复真机翻页：`touch-action:none` 直接覆盖 `.xterm-viewport`（iOS/微信 WebView 手势不再被浏览器抢走）、**物理键盘 PageUp/PageDown** 本地翻页（备屏放行给远端）、行高适配 xterm 5.x `css.cell.height` | 仅 Web 终端更新，后端无需升级 |
 | v1.0.8 | 主悬浮球上下新增**半透明 ▲/▼ 翻页键**（opacity 0.26，不遮挡内容、免开面板一键翻页）；浮窗面板内 PgUp/PgDn 移除，整组上移避开“清除”按钮 | 仅 Web 终端更新，后端无需升级 |
 | v1.0.9 | 翻页键组（▲/⌨/▼）整体再上移 80px（两个按钮直径），避开底部拇指操作区 | 仅 Web 终端更新，后端无需升级 |
+| v1.0.10 | 翻页键改用 `<button>` + `pointerdown` 直接响应（不等 click 合成），350ms 去重；修复 iOS/微信 X5 上 fixed 定位 div 点击无反应 | 仅 Web 终端更新，后端无需升级 |
 
 ## 扩展阅读
 
