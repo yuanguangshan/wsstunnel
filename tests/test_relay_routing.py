@@ -402,6 +402,19 @@ class TestHttpRequestHandlerCompat:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("call", ["_legacy_call", "_asyncio_call"])
+    async def test_index_page_not_cached(self, call):
+        """内嵌页面必须禁用缓存，否则真机一直跑旧前端（翻页键修复"永不生效"）。"""
+        resp = await getattr(self, call)("/")
+        if call == "_legacy_call":
+            _, headers, _ = resp
+        else:
+            headers = resp.headers
+        cache_control = headers.get("Cache-Control", "")
+        assert "no-store" in cache_control
+        assert "no-cache" in cache_control
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("call", ["_legacy_call", "_asyncio_call"])
     async def test_unknown_path_passes_through(self, call):
         assert (await getattr(self, call)("/favicon.ico")) is None
 

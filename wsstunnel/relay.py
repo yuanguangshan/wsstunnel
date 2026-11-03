@@ -130,6 +130,12 @@ async def _http_request_handler(connection: Any, request: Any) -> Response | Non
     if clean_path in ("/", "/index.html", "/wstunnel", "/wsstunnel"):
         headers = Headers()
         headers["Content-Type"] = "text/html; charset=utf-8"
+        # 页面是内嵌在 relay 里分发的：必须禁止缓存。
+        # 手机浏览器（尤其 iOS Safari / 微信 X5）会把 HTML 缓存到下一次
+        # 冷启动，导致 relay 已升级、真机仍跑旧页面 —— 前端修复"永远不生效"。
+        headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        headers["Pragma"] = "no-cache"
+        headers["Expires"] = "0"
         if legacy:
             # legacy 消费方执行 AbortHandshake(*resp)，要求三元组
             return (200, headers, _INDEX_HTML)

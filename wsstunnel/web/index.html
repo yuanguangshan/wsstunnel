@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>wsstunnel - Web 终端</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; touch-action: manipulation; }
@@ -31,6 +31,7 @@
     border-radius: 4px;
   }
   #status.connected { background: #2ecc71; }
+  #version { font: 11px monospace; color: #5a6a85; }
 
   #connect-form {
     display: flex; flex-direction: column;
@@ -85,52 +86,71 @@
   }
 
   /* ── 移动端浮窗控制键 ── */
-  @media (pointer: coarse) {
-    #fab { display: flex !important; }
-    #page-up, #page-down { display: flex !important; }
-  }
-  /* 主悬浮球上下的翻页键：几乎透明，不遮挡内容 */
-  #page-up, #page-down {
+  /* 悬浮按键组：▲ / ⌨ / ▼ 竖排在一个容器里，整组定位。
+     修复（v1.0.13）：旧版把 ⌨ 用 visualViewport 顶到"可视区垂直中央"，
+     而 ▲ 是 fixed bottom:238px —— 键盘一弹，可视区变矮，两者正好叠在一起，
+     ⌨ 的 z-index 更高，点 ▲ 实际点到 ⌨，于是"翻页键点击无反应"。
+     现在整组内部用 flex 排布，物理上不可能重叠。 */
+  #fab-group {
     display: none;
-    position: fixed; right: 14px;
-    width: 48px; height: 48px; border-radius: 50%;
+    position: fixed; right: 12px; bottom: 88px;
+    flex-direction: column; align-items: center; gap: 10px;
+    z-index: 41;
+    pointer-events: none;          /* 容器本身不挡终端，只有按钮接管点击 */
+  }
+  @media (pointer: coarse), (hover: none), (max-width: 768px) {
+    #fab-group { display: flex; }
+  }
+  #page-up, #page-down, #fab {
+    pointer-events: auto;
+    width: 48px; height: 48px; flex: 0 0 auto;
+    border-radius: 50%;
     padding: 0; margin: 0;
+    display: flex; align-items: center; justify-content: center;
     -webkit-appearance: none; appearance: none;
-    background: rgba(13, 40, 70, 0.30);
-    border: 1px solid rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.50);
     font-size: 16px; line-height: 1;
-    align-items: center; justify-content: center;
-    cursor: pointer; z-index: 39;
-    opacity: 0.26;
-    transition: opacity 0.2s;
+    cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     user-select: none; -webkit-user-select: none;
     touch-action: manipulation;
+    transition: opacity 0.2s, background 0.2s;
   }
-  #page-up { bottom: 238px; }   /* 主球上方 */
-  #page-down { bottom: 126px; } /* 主球下方 */
-  #page-up:active, #page-down:active { opacity: 0.72; }
+  /* 翻页键：几乎透明，不遮挡内容 */
+  #page-up, #page-down {
+    background: rgba(13, 40, 70, 0.30);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.50);
+    opacity: 0.26;
+  }
+  #page-up:active, #page-down:active,
+  #page-up.paging, #page-down.paging {
+    opacity: 0.85;
+    background: rgba(30, 90, 160, 0.55);
+  }
   #fab {
-    display: none;
-    position: fixed; right: 10px; bottom: 182px;
-    width: 48px; height: 48px; border-radius: 50%;
     background: #0f3460; color: #ccc;
     border: 2px solid #1a4a8a;
-    align-items: center; justify-content: center;
-    font-size: 22px; cursor: pointer; z-index: 40;
+    font-size: 22px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     opacity: 0.32;
-    transition: opacity 0.2s, transform 0.15s;
-    user-select: none; -webkit-user-select: none;
   }
-  #fab:active { opacity: 0.85; transform: translateY(-50%) scale(0.92); }
+  #fab:active { opacity: 0.85; }
   #fab.active { opacity: 0.85; background: #1a4a8a; }
+  /* 翻不动时的轻提示（已到顶 / 已到底） */
+  #page-hint {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 20%; padding: 6px 14px; border-radius: 14px;
+    background: rgba(0,0,0,0.72); color: #eee;
+    font: 12px system-ui, sans-serif; z-index: 60;
+    opacity: 0; transition: opacity 0.18s; pointer-events: none;
+    white-space: nowrap;
+  }
+  #page-hint.show { opacity: 1; }
 
   #fab-panel {
     display: none;
     position: fixed; right: 68px;
-    top: calc(50vh - 60px);
+    top: 40vh;               /* 打开时由 positionFabPanel() 依据按键组位置重算 */
     background: rgba(26, 26, 46, 0.95);
     border: 1px solid #333; border-radius: 12px;
     padding: 10px; gap: 6px; z-index: 39;
@@ -236,6 +256,7 @@
 
 <div id="top-bar">
   <span id="status">Disconnected</span>
+  <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.13</span>
   <button id="cluster-btn" class="hidden">📊 集群</button>
   <button id="file-btn" class="hidden">📁 上传</button>
 </div>
@@ -288,10 +309,13 @@
 </div>
 
 <!-- 移动端浮窗控制键 -->
-<!-- 主球上下的翻页键：几乎透明，点一下翻一页 -->
-<button type="button" id="page-up" title="向上翻页" aria-label="向上翻页">▲</button>
-<button type="button" id="page-down" title="向下翻页" aria-label="向下翻页">▼</button>
-<div id="fab">⌨</div>
+<!-- 悬浮按键组：▲ / ⌨ / ▼ 竖排，整组定位，内部永不重叠（v1.0.13 修复重叠吞点击） -->
+<div id="fab-group" role="group" aria-label="终端辅助按键">
+  <button type="button" id="page-up" title="向上翻页" aria-label="向上翻页">▲</button>
+  <button type="button" id="fab" title="更多按键" aria-label="更多按键">⌨</button>
+  <button type="button" id="page-down" title="向下翻页" aria-label="向下翻页">▼</button>
+</div>
+<div id="page-hint" aria-live="polite"></div>
 <div id="fab-panel">
   <div class="row">
     <button data-key="escape">Esc</button>
@@ -299,6 +323,11 @@
     <button data-key="e">E↱</button>
     <button data-key="u">U</button>
     <button data-key="k">K</button>
+  </div>
+  <div class="row">
+    <!-- 翻页的冗余入口：万一悬浮键在某个 WebView 里失灵，这里一定可点 -->
+    <button data-key="page-up" title="向上翻页">PgUp</button>
+    <button data-key="page-down" title="向下翻页">PgDn</button>
   </div>
   <div class="row">
     <button data-key="tab">Tab</button>
@@ -337,7 +366,7 @@
 <!-- 清除存储按钮 -->
 <button id="clear-btn">清除</button>
 
-<script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 
 <script>
 let ws = null;
@@ -346,6 +375,20 @@ let backends = [];
 let _mobileDup = '';
 let _mobileDupTimer = null;
 let _mobileBuf = '';
+
+// ── xterm 缓冲区兼容层 ──
+// xterm 5.x: term.buffer 是 IBufferNamespace，真正的内容在 .active / .normal / .alternate
+// xterm 4.x: term.buffer 就是 IBuffer 本体，没有 .active
+// 旧代码直接写 term.buffer.active.type —— 一旦 CDN 缓存/回退到 4.x，
+// 这里会抛 TypeError，事件处理器静默失败，表现就是"翻页键点击无反应"。
+function activeBuffer() {
+  if (!term || !term.buffer) return null;
+  return term.buffer.active || term.buffer;
+}
+function bufferType() {
+  const b = activeBuffer();
+  return b ? b.type : 'normal';
+}
 
 function mobileSend(text) {
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
@@ -599,7 +642,16 @@ function initTerminal() {
     const padding = 16;
     const cols = Math.max(20, Math.floor((el.clientWidth - padding) / cw));
     const rows = Math.max(5, Math.floor((el.clientHeight - padding) / ch));
+    // 键盘开合也会触发 resize：xterm 重排后视口会被拉回底部，
+    // 刚点 ▲ 翻上去的内容瞬间"弹回去" —— 用户看到的就是按键没反应。
+    // 这里记下"距底部还有多少行"，重排后原样恢复。
+    const before = activeBuffer();
+    const keepOffset = before ? Math.max(0, before.baseY - before.viewportY) : 0;
     term.resize(cols, rows);
+    if (keepOffset > 0) {
+      const after = activeBuffer();
+      if (after) term.scrollToLine(Math.max(0, after.baseY - keepOffset));
+    }
     // 强制 viewport 撑满容器（xterm 内联样式无法用 CSS 覆盖）
     const vp = el.querySelector('.xterm-viewport');
     if (vp) vp.style.height = el.clientHeight + 'px';
@@ -726,11 +778,37 @@ function enableKeyboardPaging() {
     if (!term || (e.key !== 'PageUp' && e.key !== 'PageDown')) return;
     const t = e.target;
     if (t && t.tagName === 'INPUT') return;          // 服务器地址/token 输入框不抢
-    if (term.buffer.active.type === 'alternate') return;  // 备屏交给远端
+    if (bufferType() === 'alternate') return;        // 备屏交给远端
     e.preventDefault();
     e.stopPropagation();
-    term.scrollPages(e.key === 'PageUp' ? -1 : 1);
+    const moved = scrollPage(e.key === 'PageUp' ? -1 : 1);
+    if (!moved) pageHint(e.key === 'PageUp' ? 'top' : 'bottom');
   }, true);  // capture：必须早于 xterm textarea 的 keydown
+}
+
+// 本地翻一页；返回是否真的移动了（已到顶/底时为 false）
+function scrollPage(dir) {
+  const before = activeBuffer();
+  if (!before) return false;
+  const y0 = before.viewportY;
+  if (typeof term.scrollPages === 'function') {
+    term.scrollPages(dir);
+  } else {
+    term.scrollLines(dir * Math.max(1, term.rows - 1));
+  }
+  const after = activeBuffer();
+  return !!after && after.viewportY !== y0;
+}
+
+// 翻不动时给个明确反馈，避免"点了完全没反应"的错觉
+let _hintTimer = null;
+function pageHint(where) {
+  const el = document.getElementById('page-hint');
+  if (!el) return;
+  el.textContent = where === 'top' ? '已到最顶部（没有更早的输出）' : '已到最底部';
+  el.classList.add('show');
+  clearTimeout(_hintTimer);
+  _hintTimer = setTimeout(() => el.classList.remove('show'), 1200);
 }
 
 enableKeyboardPaging();
@@ -920,8 +998,9 @@ function fabSend(key) {
     // 翻页分两种场景，别一律把 ESC[5~/ESC[6~ 丢给远端：
     // - 备屏（less/vim/top/tmux 等全屏程序）：翻页由远端程序负责，发按键；
     // - 正常缓冲（裸 bash 提示符）：发过去也没人理，翻本地回滚历史才有用。
-    if (term && term.buffer.active.type !== 'alternate') {
-      term.scrollPages(key === 'page-up' ? -1 : 1);
+    if (bufferType() !== 'alternate') {
+      const moved = scrollPage(key === 'page-up' ? -1 : 1);
+      if (!moved) pageHint(key === 'page-up' ? 'top' : 'bottom');
       return;
     }
     bytes = key === 'page-up' ? [0x1b, 0x5b, 0x35, 0x7e] : [0x1b, 0x5b, 0x36, 0x7e];
@@ -941,11 +1020,26 @@ function fabSend(key) {
   }
 }
 
+// ── 悬浮按键：▲ / ⌨ / ▼ ──
+// 面板跟随按键组定位（不再写死 50vh，避免键盘弹出后飘出屏幕）
+function positionFabPanel() {
+  const group = document.getElementById('fab-group');
+  const panel = document.getElementById('fab-panel');
+  if (!group || !panel) return;
+  const r = group.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  const ph = panel.offsetHeight || 220;
+  // 面板右对齐在按键组左侧，垂直方向尽量与按键组顶部对齐且不超出屏幕
+  const top = Math.min(Math.max(8, r.top + r.height / 2 - ph / 2), Math.max(8, vh - ph - 8));
+  panel.style.top = Math.round(top) + 'px';
+}
+
 document.getElementById('fab').addEventListener('click', function() {
   const panel = document.getElementById('fab-panel');
   const opening = !this.classList.contains('active');
   this.classList.toggle('active');
   panel.classList.toggle('show');
+  if (opening) positionFabPanel();
   // 打开面板时收起系统键盘，关闭时恢复
   if (term && term.textarea) {
     if (opening) term.textarea.blur();
@@ -953,18 +1047,26 @@ document.getElementById('fab').addEventListener('click', function() {
   }
 });
 
-// 主球上下的半透明翻页键（移动端免开面板直接翻页）
-// 翻页统一入口：pointerdown / touchstart / click 可能同时到，300ms 内只认一次
-let _pageFireAt = 0;
+// 每个键独立节流：旧版是全局 300ms，连点 ▲ 后立刻点 ▼ 会被吞掉，
+// 用户体感就是"点了没反应"。改成每键 180ms，互不影响。
+const _fireAt = { 'page-up': 0, 'page-down': 0 };
+function flashPageBtn(key) {
+  const el = document.getElementById(key);
+  if (!el) return;
+  el.classList.add('paging');
+  clearTimeout(el._flashTimer);
+  el._flashTimer = setTimeout(() => el.classList.remove('paging'), 220);
+}
 function firePage(key) {
   const now = Date.now();
-  if (now - _pageFireAt < 300) return;
-  _pageFireAt = now;
+  if (now - (_fireAt[key] || 0) < 180) return;
+  _fireAt[key] = now;
+  flashPageBtn(key);
   fabSend(key);
 }
 
-for (const [id, key] of [['page-up', 'page-up'], ['page-down', 'page-down']]) {
-  const el = document.getElementById(id);
+for (const key of ['page-up', 'page-down']) {
+  const el = document.getElementById(key);
   if (!el) continue;
   // pointerdown 比 click 更早、不受 300ms 延迟与双击缩放影响
   el.addEventListener('pointerdown', (e) => {
@@ -975,23 +1077,26 @@ for (const [id, key] of [['page-up', 'page-up'], ['page-down', 'page-down']]) {
   el.addEventListener('click', (e) => { e.stopPropagation(); firePage(key); });
 }
 
-// 大热区兜底：微信 X5 偶尔吞掉 fixed 元素的元素级事件。
-// 在 document 上按触摸坐标判定，热区半径 44px（按钮 48px，四周各多 20px）。
+// 坐标兜底：微信 X5 偶尔吞掉 fixed 元素的元素级事件。
+// 在 document 上按触摸坐标找最近的翻页键（热区半径 32px），
+// 取"最近的那个"，两键热区不重叠时也不会误判到相邻键。
 document.addEventListener('touchstart', (e) => {
   if (e.touches.length !== 1) return;
   const t = e.touches[0];
-  for (const [id, key] of [['page-up', 'page-up'], ['page-down', 'page-down']]) {
-    const el = document.getElementById(id);
+  let bestKey = null, bestD = Infinity;
+  for (const key of ['page-up', 'page-down']) {
+    const el = document.getElementById(key);
     if (!el) continue;
     const r = el.getBoundingClientRect();
-    if (!r.width) continue;  // 桌面端未显示
+    if (!r.width) continue;                       // 未显示（桌面端）
     const dx = t.clientX - (r.left + r.width / 2);
     const dy = t.clientY - (r.top + r.height / 2);
-    if (dx * dx + dy * dy <= 44 * 44) {
-      if (e.cancelable) e.preventDefault();
-      firePage(key);
-      return;
-    }
+    const d = dx * dx + dy * dy;
+    if (d < bestD) { bestD = d; bestKey = key; }
+  }
+  if (bestKey && bestD <= 32 * 32) {
+    if (e.cancelable) e.preventDefault();
+    firePage(bestKey);
   }
 }, { passive: false });
 
@@ -1001,7 +1106,8 @@ document.getElementById('fab-panel').addEventListener('click', function(e) {
   const key = btn.dataset.key;
   if (key === 'copy-out' || key === 'copy-all') {
     let text = '';
-    const buf = term.buffer.active;
+    const buf = activeBuffer();
+    if (!buf) return;
     if (key === 'copy-all') {
       for (let i = 0; i < buf.length; i++) {
         text += (buf.getLine(i)?.translateToString() || '') + '\n';
@@ -1015,7 +1121,11 @@ document.getElementById('fab-panel').addEventListener('click', function(e) {
     }
     return;
   }
-  fabSend(key);
+  if (key === 'page-up' || key === 'page-down') {
+    firePage(key);                     // 复用节流 + 按下反馈 + 到顶/到底提示
+  } else {
+    fabSend(key);
+  }
   // 不收起面板，方便连续点击
 });
 
@@ -1030,19 +1140,30 @@ document.addEventListener('click', function(e) {
   }
 });
 
-// ── 键盘弹出时固定 FAB 位置 ──
+// ── 键盘弹出时整组按键贴着可视区底边上移 ──
+// 旧实现把 ⌨ 单独顶到"可视区垂直中央"（midY - 24），
+// 而 ▲ 是 fixed bottom:238px —— 键盘一弹可视区变矮，两者正好重叠，
+// ⌨ 的 z-index 更高，点 ▲ 实际点到 ⌨，这就是翻页键"点了没反应"的根因。
+// 现在整组一起动，内部间距由 flex 保证，永不可能互相覆盖。
 (function() {
-  const fab = document.getElementById('fab');
-  const panel = document.getElementById('fab-panel');
-  if (!window.visualViewport) return;
-  function fixPos() {
+  const group = document.getElementById('fab-group');
+  if (!group || !window.visualViewport) return;
+  const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function applyKbOffset() {
     const vv = window.visualViewport;
-    const midY = vv.height / 2;
-    fab.style.top = (midY - 24 + vv.offsetTop) + 'px';
-    panel.style.top = (midY - 60 + vv.offsetTop) + 'px';
+    // Android Chrome 键盘弹出时布局视口不缩、fixed 元素会被键盘盖住 → 手动上移；
+    // iOS 的 fixed 元素本来就会贴着键盘上方，再移会飞掉。
+    const covered = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
+    const lift = (!isIOS && covered > 8) ? covered : 0;
+    group.style.transform = lift ? `translateY(${-lift}px)` : '';
+    const panel = document.getElementById('fab-panel');
+    if (panel && panel.classList.contains('show')) positionFabPanel();
   }
-  window.visualViewport.addEventListener('resize', fixPos);
-  setTimeout(fixPos, 500);
+  window.visualViewport.addEventListener('resize', applyKbOffset);
+  window.visualViewport.addEventListener('scroll', applyKbOffset);
+  window.addEventListener('resize', applyKbOffset);
+  applyKbOffset();
 })();
 
 // ── 集群面板 ──
