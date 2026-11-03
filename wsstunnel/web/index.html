@@ -9,6 +9,8 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; touch-action: manipulation; }
   #terminal { width: 100vw; height: 100vh; padding: 8px; }
+  /* 移动端：手势交给 JS 统一处理，避免浏览器抢占后 touchmove 被 cancel */
+  #terminal, #terminal .xterm { touch-action: none; }
   #terminal .xterm { height: 100%; }
   #terminal .xterm-viewport { height: 100% !important; }
   #top-bar {
@@ -630,6 +632,49 @@ function initTerminal() {
       if (text) mobileSend(text);
     });
   }
+
+  // 移动端触摸滚动（xterm 自身不处理手指滑动）
+  enableTouchScroll();
+}
+
+// 移动端触摸滚动：手指下滑看更早的输出，上滑看更新的内容
+function enableTouchScroll() {
+  const el = document.getElementById('terminal');
+  if (!el || el.dataset.touchScroll === '1') return;  // 重连后避免重复绑定
+  el.dataset.touchScroll = '1';
+
+  const cellHeight = () => {
+    try {
+      const d = term && term._core?._renderService?.dimensions;
+      if (d && d.actualCellHeight > 0) return d.actualCellHeight;
+    } catch {}
+    return 17;
+  };
+
+  let startY = 0, applied = 0, moved = false;
+
+  el.addEventListener('touchstart', (e) => {
+    if (!term || e.touches.length !== 1) return;
+    startY = e.touches[0].clientY;
+    applied = 0;
+    moved = false;
+  }, { passive: true });
+
+  el.addEventListener('touchmove', (e) => {
+    if (!term || e.touches.length !== 1) return;
+    const dy = e.touches[0].clientY - startY;
+    if (!moved && Math.abs(dy) < 6) return;  // 轻触放行，保证点击聚焦弹键盘
+    moved = true;
+    if (e.cancelable) e.preventDefault();
+    // 手指下滑(dy > 0) = 往更早的内容翻 = 负行数；上滑 = 往更新的内容翻
+    const target = Math.trunc(-dy / cellHeight());
+    if (target !== applied) {
+      term.scrollLines(target - applied);
+      applied = target;
+    }
+  }, { passive: false });
+
+  el.addEventListener('touchend', () => { moved = false; applied = 0; }, { passive: true });
 }
 
 // ── 文件传输 ──
