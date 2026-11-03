@@ -81,10 +81,10 @@ class TestMenuPanel:
         assert 'id="cluster-btn"' not in panel, "集群是高频入口，应留在顶栏"
 
     def test_version_in_menu(self, html):
-        """版本号是低频信息，收进菜单底部即可。"""
+        """版本号是低频信息，收进菜单底部即可（具体版本号由 test_web_ui 校验）。"""
         panel = _menu_panel(html)
         assert 'id="version"' in panel, "版本号应显示在菜单里"
-        assert "v1.0.15" in panel
+        assert re.search(r'<span id="version"[^>]*>v\d+\.\d+\.\d+</span>', panel)
 
     def test_menu_hidden_by_default(self, html):
         m = re.search(r'<div id="menu-panel"([^>]*)>', html)

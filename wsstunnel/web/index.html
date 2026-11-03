@@ -356,6 +356,24 @@
   #bg-enable { width: 20px; height: 20px; accent-color: #2ecc71; cursor: pointer; }
   #bg-blur, #bg-bright { width: 100%; accent-color: #4a7fd4; }
   .bg-val { color: #fff; font: 12px Menlo, Monaco, monospace; }
+  /* 字体颜色：原生取色器 + 几个常用预设色块 */
+  #bg-fg {
+    width: 52px; height: 34px; padding: 0; flex: 0 0 auto;
+    border: 1px solid #333; border-radius: 6px;
+    background: #16213e; cursor: pointer;
+  }
+  #bg-panel .bg-swatch {
+    width: 26px; height: 26px; flex: 0 0 auto;
+    border-radius: 50%; border: 2px solid #3a4661;
+    padding: 0; cursor: pointer;
+    transition: transform 0.12s, border-color 0.12s;
+  }
+  #bg-panel .bg-swatch:hover { border-color: #8aa4cc; transform: scale(1.1); }
+  #bg-fg-reset {
+    padding: 6px 10px; border: none; border-radius: 6px; flex: 0 0 auto;
+    background: #0f3460; color: #eee; cursor: pointer; font-size: 11px;
+  }
+  #bg-fg-reset:hover { background: #1a4a8a; }
   #bg-preview {
     width: 100%; height: 130px; border-radius: 8px;
     border: 1px dashed #3a4661; background: #101828 center/cover no-repeat;
@@ -384,7 +402,7 @@
   <div class="menu-sep"></div>
   <div class="menu-foot">
     <span>版本</span>
-    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.15</span>
+    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.16</span>
   </div>
 </div>
 
@@ -474,6 +492,19 @@
     <div class="bg-field">
       <span class="bg-label">亮度 <span class="bg-val" id="bg-bright-val">100%</span></span>
       <input type="range" id="bg-bright" min="20" max="150" step="5" value="100" />
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">字体颜色 <span class="bg-val" id="bg-fg-val">#e0e0e0</span></span>
+      <div class="bg-inline">
+        <input type="color" id="bg-fg" value="#e0e0e0" title="终端文字颜色" />
+        <button type="button" class="bg-swatch" data-fg="#e0e0e0" style="background:#e0e0e0" title="默认浅灰"></button>
+        <button type="button" class="bg-swatch" data-fg="#ffffff" style="background:#ffffff" title="纯白"></button>
+        <button type="button" class="bg-swatch" data-fg="#50fa7b" style="background:#50fa7b" title="绿色"></button>
+        <button type="button" class="bg-swatch" data-fg="#f1fa8c" style="background:#f1fa8c" title="黄色"></button>
+        <button type="button" class="bg-swatch" data-fg="#8be9fd" style="background:#8be9fd" title="青色"></button>
+        <button type="button" id="bg-fg-reset">默认</button>
+      </div>
     </div>
 
     <div class="bg-field">
@@ -646,9 +677,11 @@ const BG_DB_STORE = 'assets';
 const BG_DB_KEY = 'current';
 const BG_PREFS_KEY = 'wsstunnel_bg_prefs';
 const BG_MAX_BYTES = 20 * 1024 * 1024;   // 单张图上限 20MB
+const BG_FG_DEFAULT = '#e0e0e0';          // 终端文字默认色（与 TERM_THEME.foreground 一致）
+const BG_FG_RE = /^#[0-9a-f]{6}$/i;
 
 const bgState = {
-  enabled: false, blur: 0, bright: 100,
+  enabled: false, blur: 0, bright: 100, fg: BG_FG_DEFAULT,
   hasImage: false, kind: null, url: '', name: '', cached: false,
 };
 
@@ -678,9 +711,9 @@ function bgStatus(msg) {
   if (el) el.textContent = msg;
 }
 
-// ── 偏好（开关/模糊/亮度）──
+// ── 偏好（开关/模糊/亮度/字体颜色）──
 function bgPrefsLoad() {
-  const defaults = { enabled: false, blur: 0, bright: 100 };
+  const defaults = { enabled: false, blur: 0, bright: 100, fg: BG_FG_DEFAULT };
   try {
     const raw = localStorage.getItem(BG_PREFS_KEY);
     if (!raw) return defaults;
@@ -689,6 +722,7 @@ function bgPrefsLoad() {
       enabled: !!v.enabled,
       blur: Math.min(30, Math.max(0, Number(v.blur) || 0)),
       bright: Math.min(150, Math.max(20, Number(v.bright) || 100)),
+      fg: BG_FG_RE.test(String(v.fg || '')) ? String(v.fg).toLowerCase() : BG_FG_DEFAULT,
     };
   } catch (e) { return defaults; }
 }
@@ -696,7 +730,8 @@ function bgPrefsLoad() {
 function bgPrefsSave() {
   try {
     localStorage.setItem(BG_PREFS_KEY, JSON.stringify({
-      enabled: bgState.enabled, blur: bgState.blur, bright: bgState.bright,
+      enabled: bgState.enabled, blur: bgState.blur,
+      bright: bgState.bright, fg: bgState.fg,
     }));
   } catch (e) {}
 }
@@ -795,6 +830,7 @@ function bgApplyTerminalTheme(transparent) {
   if (!term) return;
   try {
     term.options.theme = Object.assign({}, TERM_THEME, {
+      foreground: bgState.fg,
       background: transparent ? 'rgba(0,0,0,0)' : '#1a1a2e',
     });
   } catch (e) {}
@@ -803,15 +839,19 @@ function bgApplyTerminalTheme(transparent) {
 function bgUpdateLabels() {
   const blurVal = bgEl('bg-blur-val');
   const brightVal = bgEl('bg-bright-val');
+  const fgVal = bgEl('bg-fg-val');
   if (blurVal) blurVal.textContent = bgState.blur + 'px';
   if (brightVal) brightVal.textContent = bgState.bright + '%';
+  if (fgVal) fgVal.textContent = bgState.fg;
 }
 
 function bgSyncControls() {
   const blur = bgEl('bg-blur');
   const bright = bgEl('bg-bright');
+  const fg = bgEl('bg-fg');
   if (blur) blur.value = String(bgState.blur);
   if (bright) bright.value = String(bgState.bright);
+  if (fg) fg.value = bgState.fg;
   bgUpdateLabels();
   bgRefreshVisibility();
 }
@@ -820,6 +860,19 @@ function bgSetEnabled(on) {
   bgState.enabled = !!on;
   bgPrefsSave();
   bgRefreshVisibility();
+}
+
+// 字体颜色：只接受 #rrggbb（原生 color input 与预设色块都会走这里）
+function bgSetForeground(color) {
+  const c = String(color || '').trim().toLowerCase();
+  if (!BG_FG_RE.test(c)) return;
+  bgState.fg = c;
+  const fg = bgEl('bg-fg');
+  if (fg) fg.value = c;
+  bgUpdateLabels();
+  // 终端已连接时立即换文字色；未连接时只存状态，initTerminal 会用上
+  bgApplyTerminalTheme(bgState.enabled && bgState.hasImage);
+  bgPrefsSave();
 }
 
 function bgTogglePanel(force) {
@@ -943,6 +996,7 @@ async function bgBoot() {
   const prefs = bgPrefsLoad();
   bgState.blur = prefs.blur;
   bgState.bright = prefs.bright;
+  bgState.fg = prefs.fg;
   bgState.enabled = prefs.enabled;
   bgApplyFilter();
   bgSyncControls();
@@ -1041,6 +1095,18 @@ async function bgBoot() {
     });
     bright.addEventListener('change', bgPrefsSave);
   }
+
+  const fg = bgEl('bg-fg');
+  if (fg) {
+    // input 实时预览，change 落盘
+    fg.addEventListener('input', () => bgSetForeground(fg.value));
+    fg.addEventListener('change', () => bgSetForeground(fg.value));
+  }
+  const fgReset = bgEl('bg-fg-reset');
+  if (fgReset) fgReset.addEventListener('click', () => bgSetForeground(BG_FG_DEFAULT));
+  document.querySelectorAll('#bg-panel .bg-swatch').forEach((el) => {
+    el.addEventListener('click', () => bgSetForeground(el.dataset.fg));
+  });
 
   // 面板外点击收起（与 fab 面板行为一致）
   document.addEventListener('click', (e) => {
@@ -1239,6 +1305,7 @@ function initTerminal() {
     allowTransparency: true,
     fontFamily: 'Menlo, Monaco, "Fira Code", monospace',
     theme: Object.assign({}, TERM_THEME, {
+      foreground: bgState.fg,
       background: (bgState.enabled && bgState.hasImage) ? 'rgba(0,0,0,0)' : TERM_THEME.background,
     }),
   });

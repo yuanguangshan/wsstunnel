@@ -159,3 +159,45 @@ class TestBackgroundRuntime:
     def test_local_file_and_url_kinds(self, html):
         code = _code_lines(html)
         assert "kind: 'file'" in code and "kind: 'url'" in code, "两种来源要能在缓存里区分"
+
+
+class TestFontColor:
+    """v1.0.16：终端字体颜色可调（xterm theme.foreground）。"""
+
+    def test_color_input_and_reset(self, html):
+        m = re.search(r'<input[^>]*id="bg-fg"[^>]*>', html)
+        assert m, "缺少字体颜色取色器 #bg-fg"
+        tag = m.group(0)
+        assert 'type="color"' in tag, "字体颜色要用原生取色器"
+        assert 'value="#e0e0e0"' in tag, "默认色应与 TERM_THEME.foreground 一致"
+        assert 'id="bg-fg-reset"' in html, "缺少恢复默认颜色按钮"
+        assert 'id="bg-fg-val"' in html, "缺少颜色值显示"
+
+    def test_preset_swatches(self, html):
+        swatches = re.findall(r'class="bg-swatch" data-fg="(#[0-9a-fA-F]{6})"', html)
+        assert len(swatches) >= 4, "应提供几个常用预设颜色"
+        for c in swatches:
+            assert re.fullmatch(r"#[0-9a-fA-F]{6}", c)
+
+    def test_foreground_applied_to_theme(self, html):
+        code = _code_lines(html)
+        # 连接时构造主题、运行期切主题都要带上字体颜色
+        assert code.count("foreground: bgState.fg") >= 1, (
+            "xterm theme 必须使用 bgState.fg 作为 foreground"
+        )
+        assert "foreground: bgState.fg" in code
+
+    def test_setter_validates_and_persists(self, html):
+        code = _code_lines(html)
+        assert "function bgSetForeground(" in code
+        assert "BG_FG_RE.test(c)" in code, "颜色必须校验 #rrggbb"
+        assert "fg: bgState.fg" in code, "字体颜色必须持久化到 prefs"
+        assert "bgPrefsLoad" in code and "fg:" in code
+
+    def test_boot_restores_fg(self, html):
+        code = _code_lines(html)
+        assert "bgState.fg = prefs.fg" in code, "刷新后要恢复字体颜色"
+
+    def test_leftover_no_inline_onclick(self, html):
+        """色块统一走事件绑定，避免内联 onclick 被 CSP 干掉。"""
+        assert "onclick=" not in html
