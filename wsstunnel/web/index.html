@@ -236,6 +236,69 @@
   .cluster-row button:hover { background: #1a4a8a; }
   .cluster-row select { cursor: pointer; }
 
+  /* ── 快捷命令面板 ── */
+  #quick-panel {
+    position: fixed; top: 0; right: 0;
+    width: 360px; max-width: 92vw; height: 100vh;
+    background: rgba(22, 33, 62, 0.98);
+    border-left: 1px solid #333;
+    box-shadow: -6px 0 24px rgba(0, 0, 0, 0.55);
+    z-index: 34; display: flex; flex-direction: column;
+    font: 13px/1.5 system-ui, sans-serif; color: #ccc;
+  }
+  #quick-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; border-bottom: 1px solid #333;
+    font-weight: bold; color: #fff;
+  }
+  #quick-close {
+    background: none; border: none; color: #666; font-size: 16px;
+    cursor: pointer; padding: 2px 6px;
+  }
+  #quick-close:hover { color: #fff; }
+  #quick-body {
+    flex: 1; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .quick-form { display: flex; gap: 6px; flex-wrap: wrap; }
+  .quick-form input {
+    padding: 8px 10px; background: #16213e; color: #eee;
+    border: 1px solid #333; border-radius: 6px;
+    font: 12px Menlo, Monaco, monospace; outline: none; min-width: 0;
+  }
+  .quick-form input:focus { border-color: #0f3460; }
+  #quick-name { flex: 0 0 88px; }
+  #quick-cmd { flex: 1; }
+  #quick-add {
+    padding: 8px 12px; border: none; border-radius: 6px;
+    background: #0f3460; color: #eee; cursor: pointer;
+    font-size: 12px; white-space: nowrap;
+  }
+  #quick-add:hover { background: #1a4a8a; }
+  .quick-item { display: flex; gap: 6px; align-items: stretch; }
+  .quick-run {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+    align-items: flex-start; padding: 9px 12px; text-align: left;
+    background: #16213e; border: 1px solid #333; border-radius: 8px;
+    color: #ddd; cursor: pointer;
+  }
+  .quick-run:hover, .quick-run:active {
+    background: #1a4a8a; border-color: #1a4a8a; color: #fff;
+  }
+  .quick-name { font-weight: 600; font-size: 12px; }
+  .quick-cmd {
+    font: 11px Menlo, Monaco, monospace; color: #8892a6;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .quick-run:hover .quick-cmd { color: #c9d6ee; }
+  .quick-del {
+    flex: 0 0 36px; background: #3a2430; color: #e8a0a0;
+    border: none; border-radius: 8px; cursor: pointer; font-size: 16px;
+  }
+  .quick-del:hover { background: #5a2c3a; color: #fff; }
+  #quick-empty { color: #66708a; font-size: 12px; text-align: center; padding: 24px 0; }
+  #quick-tip { font-size: 11px; color: #e8a0a0; min-height: 14px; }
+
   /* ── 顶栏 ☰ 菜单 ──────────────────────────────────────────
      上传、集群、背景、清除都是低频操作，收进菜单里：
      顶栏只留状态 + 版本 + ☰，不挤占终端宽度。 */
@@ -374,7 +437,9 @@
     border: 1px solid #333; border-radius: 8px;
   }
   #bg-enable { width: 20px; height: 20px; accent-color: #2ecc71; cursor: pointer; }
-  #bg-blur, #bg-bright { width: 100%; accent-color: #4a7fd4; }
+  #bg-blur, #bg-bright, #bg-font, #bg-lh { width: 100%; accent-color: #4a7fd4; }
+  #bg-session { width: 18px; height: 18px; accent-color: #2ecc71; flex: 0 0 auto; cursor: pointer; }
+  #bg-session-hint { font-size: 11px; color: #66708a; line-height: 1.4; }
   .bg-val { color: #fff; font: 12px Menlo, Monaco, monospace; }
   /* 字体颜色：原生取色器 + 几个常用预设色块 */
   #bg-fg {
@@ -416,6 +481,7 @@
 <!-- 顶栏菜单：上传/背景/清除/版本这些低频信息收进来，不挤占终端宽度 -->
 <div id="menu-panel" class="hidden" role="menu">
   <button id="file-btn" class="hidden" role="menuitem">📁 上传文件</button>
+  <button id="quick-btn" role="menuitem">⚡ 快捷命令</button>
   <button id="bg-btn" role="menuitem">🖼 背景设置</button>
   <div class="menu-sep"></div>
   <button id="clear-btn" class="danger" role="menuitem">🧹 清除连接配置</button>
@@ -429,7 +495,7 @@
   <div class="menu-sep"></div>
   <div class="menu-foot">
     <span>版本</span>
-    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.17</span>
+    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.18</span>
   </div>
 </div>
 
@@ -535,11 +601,47 @@
     </div>
 
     <div class="bg-field">
+      <span class="bg-label">字号 <span class="bg-val" id="bg-font-val">14px</span></span>
+      <input type="range" id="bg-font" min="10" max="24" step="1" value="14" />
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">行高 <span class="bg-val" id="bg-lh-val">1.2</span></span>
+      <input type="range" id="bg-lh" min="10" max="18" step="1" value="12" />
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">会话恢复</span>
+      <div class="bg-inline">
+        <input type="checkbox" id="bg-session" />
+        <span id="bg-session-hint">刷新 / 重连后恢复上次终端内容（最多 500 行）</span>
+      </div>
+    </div>
+
+    <div class="bg-field">
       <span class="bg-label">预览</span>
       <div id="bg-preview"></div>
     </div>
 
     <div id="bg-status">未设置背景</div>
+  </div>
+</div>
+
+<!-- 快捷命令面板 -->
+<div id="quick-panel" class="hidden">
+  <div id="quick-header">
+    <span>⚡ 快捷命令</span>
+    <button id="quick-close" title="关闭">✕</button>
+  </div>
+  <div id="quick-body">
+    <div class="quick-form">
+      <input id="quick-name" placeholder="名称" maxlength="12" />
+      <input id="quick-cmd" placeholder="命令，如 docker ps" />
+      <button type="button" id="quick-add">添加</button>
+    </div>
+    <div id="quick-tip"></div>
+    <div id="quick-list"></div>
+    <div id="quick-empty">还没有快捷命令，添加一条吧</div>
   </div>
 </div>
 
@@ -702,6 +804,156 @@ function clearConfirmShow(show) {
 })();
 
 // ──────────────────────────────────────────────
+//  快捷命令面板：移动端常用命令一键发送，可增删，存 localStorage
+// ──────────────────────────────────────────────
+const QUICK_KEY = 'wsstunnel_quick_cmds';
+const QUICK_MAX = 30;
+const QUICK_DEFAULT = [
+  { name: '列目录', cmd: 'ls -la' },
+  { name: '磁盘', cmd: 'df -h' },
+  { name: '内存', cmd: 'free -h' },
+  { name: '进程', cmd: 'ps aux --sort=-%cpu | head' },
+  { name: 'Docker', cmd: 'docker ps' },
+];
+
+let quickCmds = [];
+
+function quickLoad() {
+  try {
+    const raw = localStorage.getItem(QUICK_KEY);
+    if (!raw) return QUICK_DEFAULT.slice();
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return QUICK_DEFAULT.slice();
+    return arr
+      .filter((x) => x && typeof x.cmd === 'string' && x.cmd.trim())
+      .map((x) => ({
+        name: String(x.name || '').slice(0, 20),
+        cmd: String(x.cmd).slice(0, 500),
+      }))
+      .slice(0, QUICK_MAX);
+  } catch (e) { return QUICK_DEFAULT.slice(); }
+}
+
+function quickSave() {
+  try { localStorage.setItem(QUICK_KEY, JSON.stringify(quickCmds)); } catch (e) {}
+}
+
+function quickTip(msg) {
+  const el = document.getElementById('quick-tip');
+  if (!el) return;
+  el.textContent = msg || '';
+  clearTimeout(el._timer);
+  if (msg) el._timer = setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+function quickRender() {
+  const list = document.getElementById('quick-list');
+  const empty = document.getElementById('quick-empty');
+  if (!list) return;
+  list.textContent = '';                 // 用 createElement 而不是 innerHTML：命令是用户输入
+  quickCmds.forEach((item, idx) => {
+    const row = document.createElement('div');
+    row.className = 'quick-item';
+
+    const run = document.createElement('button');
+    run.type = 'button';
+    run.className = 'quick-run';
+    run.title = item.cmd;
+    const name = document.createElement('span');
+    name.className = 'quick-name';
+    name.textContent = item.name || item.cmd.slice(0, 24);
+    const cmd = document.createElement('span');
+    cmd.className = 'quick-cmd';
+    cmd.textContent = item.cmd;
+    run.appendChild(name);
+    run.appendChild(cmd);
+    run.addEventListener('click', () => quickSend(item.cmd));
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'quick-del';
+    del.textContent = '×';
+    del.title = '删除';
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      quickRemove(idx);
+    });
+
+    row.appendChild(run);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+  if (empty) empty.style.display = quickCmds.length ? 'none' : 'block';
+}
+
+function quickToggle(force) {
+  const panel = document.getElementById('quick-panel');
+  if (!panel) return;
+  const open = typeof force === 'boolean' ? force : panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !open);
+  if (open) {
+    bgTogglePanel(false);                // 与背景抽屉互斥
+    quickRender();
+    quickTip('');
+    const input = document.getElementById('quick-cmd');
+    if (input) setTimeout(() => input.focus(), 60);
+  }
+}
+
+function quickSend(cmd) {
+  const text = String(cmd || '').trim();
+  if (!text) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    quickTip('还没连接，无法发送');
+    return;
+  }
+  ws.send(new TextEncoder().encode(text + '\r'));
+  quickToggle(false);
+  if (term && term.textarea) setTimeout(() => term.textarea.focus(), 60);
+}
+
+function quickAddFromForm() {
+  const nameEl = document.getElementById('quick-name');
+  const cmdEl = document.getElementById('quick-cmd');
+  const cmd = cmdEl ? cmdEl.value.trim() : '';
+  if (!cmd) { if (cmdEl) cmdEl.focus(); return; }
+  if (quickCmds.length >= QUICK_MAX) quickTip('最多保存 ' + QUICK_MAX + ' 条');
+  else {
+    quickCmds.push({ name: nameEl.value.trim().slice(0, 20), cmd: cmd.slice(0, 500) });
+    quickSave();
+    quickRender();
+  }
+  if (nameEl) nameEl.value = '';
+  if (cmdEl) { cmdEl.value = ''; cmdEl.focus(); }
+}
+
+function quickRemove(idx) {
+  if (idx < 0 || idx >= quickCmds.length) return;
+  quickCmds.splice(idx, 1);
+  quickSave();
+  quickRender();
+}
+
+(function bindQuickUI() {
+  quickCmds = quickLoad();
+  quickRender();
+  const btn = document.getElementById('quick-btn');
+  if (btn) btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menuClose();
+    quickToggle(true);
+  });
+  const close = document.getElementById('quick-close');
+  if (close) close.addEventListener('click', () => quickToggle(false));
+  const add = document.getElementById('quick-add');
+  if (add) add.addEventListener('click', quickAddFromForm);
+  const cmd = document.getElementById('quick-cmd');
+  if (cmd) cmd.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); quickAddFromForm(); }
+  });
+})();
+
+// ──────────────────────────────────────────────
 //  背景图配置（v1.0.15）
 //  · 来源：本地文件 / 网页 URL
 //  · 缓存：图片二进制存 IndexedDB —— URL 图首次拉取后，刷新页面/断线重连
@@ -720,8 +972,12 @@ const BG_FG_RE = /^#[0-9a-f]{6}$/i;
 
 const bgState = {
   enabled: false, blur: 0, bright: 100, fg: BG_FG_DEFAULT,
+  fontSize: 14, lineHeight: 1.2, sessionRestore: true,
   hasImage: false, kind: null, url: '', name: '', cached: false,
 };
+
+// initTerminal 内部的 fitTerminal 挂到这里，字号/行高变化时才能重新排版
+let _fitTerminal = null;
 
 // 终端主题：背景图启用时把 background 换成透明，canvas 才会透出 #bg-layer
 const TERM_THEME = {
@@ -751,7 +1007,10 @@ function bgStatus(msg) {
 
 // ── 偏好（开关/模糊/亮度/字体颜色）──
 function bgPrefsLoad() {
-  const defaults = { enabled: false, blur: 0, bright: 100, fg: BG_FG_DEFAULT };
+  const defaults = {
+    enabled: false, blur: 0, bright: 100, fg: BG_FG_DEFAULT,
+    fontSize: 14, lineHeight: 1.2, sessionRestore: true,
+  };
   try {
     const raw = localStorage.getItem(BG_PREFS_KEY);
     if (!raw) return defaults;
@@ -761,6 +1020,9 @@ function bgPrefsLoad() {
       blur: Math.min(30, Math.max(0, Number(v.blur) || 0)),
       bright: Math.min(150, Math.max(20, Number(v.bright) || 100)),
       fg: BG_FG_RE.test(String(v.fg || '')) ? String(v.fg).toLowerCase() : BG_FG_DEFAULT,
+      fontSize: Math.min(24, Math.max(10, Number(v.fontSize) || 14)),
+      lineHeight: Math.min(1.8, Math.max(1.0, Number(v.lineHeight) || 1.2)),
+      sessionRestore: v.sessionRestore !== false,
     };
   } catch (e) { return defaults; }
 }
@@ -770,6 +1032,8 @@ function bgPrefsSave() {
     localStorage.setItem(BG_PREFS_KEY, JSON.stringify({
       enabled: bgState.enabled, blur: bgState.blur,
       bright: bgState.bright, fg: bgState.fg,
+      fontSize: bgState.fontSize, lineHeight: bgState.lineHeight,
+      sessionRestore: bgState.sessionRestore,
     }));
   } catch (e) {}
 }
@@ -878,20 +1142,40 @@ function bgUpdateLabels() {
   const blurVal = bgEl('bg-blur-val');
   const brightVal = bgEl('bg-bright-val');
   const fgVal = bgEl('bg-fg-val');
+  const fontVal = bgEl('bg-font-val');
+  const lhVal = bgEl('bg-lh-val');
   if (blurVal) blurVal.textContent = bgState.blur + 'px';
   if (brightVal) brightVal.textContent = bgState.bright + '%';
   if (fgVal) fgVal.textContent = bgState.fg;
+  if (fontVal) fontVal.textContent = bgState.fontSize + 'px';
+  if (lhVal) lhVal.textContent = bgState.lineHeight.toFixed(1);
 }
 
 function bgSyncControls() {
   const blur = bgEl('bg-blur');
   const bright = bgEl('bg-bright');
   const fg = bgEl('bg-fg');
+  const font = bgEl('bg-font');
+  const lh = bgEl('bg-lh');
+  const sess = bgEl('bg-session');
   if (blur) blur.value = String(bgState.blur);
   if (bright) bright.value = String(bgState.bright);
   if (fg) fg.value = bgState.fg;
+  if (font) font.value = String(bgState.fontSize);
+  if (lh) lh.value = String(Math.round(bgState.lineHeight * 10));
+  if (sess) sess.checked = bgState.sessionRestore;
   bgUpdateLabels();
   bgRefreshVisibility();
+}
+
+// 字号/行高改完要重新 fit，否则列数/行数还是旧字体的，终端会错位
+function applyTerminalFont() {
+  if (!term) return;
+  try {
+    term.options.fontSize = bgState.fontSize;
+    term.options.lineHeight = bgState.lineHeight;
+  } catch (e) { return; }
+  if (_fitTerminal) _fitTerminal();
 }
 
 function bgSetEnabled(on) {
@@ -920,7 +1204,10 @@ function bgTogglePanel(force) {
   const open = typeof force === 'boolean' ? force : panel.classList.contains('hidden');
   panel.classList.toggle('hidden', !open);
   if (btn) btn.classList.toggle('active', open);
-  if (open) bgSyncControls();
+  if (open) {
+    quickToggle(false);       // 两个右侧抽屉不同时开
+    bgSyncControls();
+  }
 }
 
 // ── 获取图片：先直连（快），CORS 挡住再走 relay 代理 ──
@@ -1014,6 +1301,79 @@ async function bgApplyLocalFile(file) {
     : `已应用并缓存：${file.name}`);
 }
 
+// ──────────────────────────────────────────────
+//  会话内容恢复：刷新/切后台被回收后，终端历史还在
+//  · 只保存最近 500 行纯文本（无 ANSI 颜色），行内截断 1000 字符
+//  · 存 localStorage（同步写，pagehide 时也来得及）
+//  · 按 location.host 分区，避免不同 relay 的内容串
+// ──────────────────────────────────────────────
+let _sessionSaveTimer = null;
+// 恢复时写入的分隔标记；保存时要剔掉，否则每刷新一次就多叠一行
+const SESSION_MARK_RE = /^── 上次会话（.*） ──$/;
+
+function sessionKey() {
+  return 'wsstunnel_term_session:' + location.host;
+}
+
+function sessionLines() {
+  const buf = activeBuffer();
+  if (!buf) return [];
+  const total = buf.length;
+  const start = Math.max(0, total - 500);
+  const lines = [];
+  for (let i = start; i < total; i++) {
+    const line = buf.getLine(i);
+    let text = line ? line.translateToString(true) : '';
+    text = text.replace(/\s+$/, '');   // 某些 xterm 版本 trimRight 不彻底，手动兜底
+    if (text.length > 1000) text = text.slice(0, 1000) + '…';
+    if (SESSION_MARK_RE.test(text)) continue;   // 旧的分隔标记不再重复保存
+    lines.push(text);
+  }
+  while (lines.length && !lines[0]) lines.shift();
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines;
+}
+
+function saveSessionNow() {
+  if (!bgState.sessionRestore || !term) return;
+  try {
+    const lines = sessionLines();
+    if (!lines.length) return;
+    localStorage.setItem(sessionKey(), JSON.stringify({ ts: Date.now(), lines }));
+  } catch (e) { /* 隐私模式/超限：放弃保存，不影响终端 */ }
+}
+
+// 输出很密集时每帧写 localStorage 太浪费，2s 防抖
+function scheduleSessionSave() {
+  if (!bgState.sessionRestore) return;
+  clearTimeout(_sessionSaveTimer);
+  _sessionSaveTimer = setTimeout(saveSessionNow, 2000);
+}
+
+function clearSession() {
+  clearTimeout(_sessionSaveTimer);
+  try { localStorage.removeItem(sessionKey()); } catch (e) {}
+}
+
+function restoreSession() {
+  if (!bgState.sessionRestore || !term) return;
+  let rec = null;
+  try { rec = JSON.parse(localStorage.getItem(sessionKey()) || 'null'); } catch (e) { return; }
+  if (!rec || !Array.isArray(rec.lines) || !rec.lines.length) return;
+  const when = new Date(rec.ts || Date.now());
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} `
+    + `${pad(when.getHours())}:${pad(when.getMinutes())}`;
+  const lines = rec.lines.slice(-500).map((l) => String(l).slice(0, 1000));
+  const text = `\r\n\x1b[90m── 上次会话（${stamp}） ──\x1b[0m\r\n`
+    + lines.join('\r\n') + '\r\n';
+  try {
+    term.write(text, () => {
+      try { term.scrollToBottom(); } catch (e) {}
+    });
+  } catch (e) {}
+}
+
 async function bgClearAll() {
   await bgIdbDelete(BG_DB_KEY);
   if (_bgObjUrl) { URL.revokeObjectURL(_bgObjUrl); _bgObjUrl = null; }
@@ -1035,6 +1395,9 @@ async function bgBoot() {
   bgState.blur = prefs.blur;
   bgState.bright = prefs.bright;
   bgState.fg = prefs.fg;
+  bgState.fontSize = prefs.fontSize;
+  bgState.lineHeight = prefs.lineHeight;
+  bgState.sessionRestore = prefs.sessionRestore;
   bgState.enabled = prefs.enabled;
   bgApplyFilter();
   bgSyncControls();
@@ -1146,6 +1509,35 @@ async function bgBoot() {
     el.addEventListener('click', () => bgSetForeground(el.dataset.fg));
   });
 
+  const font = bgEl('bg-font');
+  if (font) {
+    font.addEventListener('input', () => {
+      bgState.fontSize = Number(font.value) || 14;
+      bgUpdateLabels();
+      applyTerminalFont();
+      bgPrefsSaveSoon();
+    });
+    font.addEventListener('change', bgPrefsSave);
+  }
+
+  const lh = bgEl('bg-lh');
+  if (lh) {
+    lh.addEventListener('input', () => {
+      bgState.lineHeight = Math.round(Number(lh.value)) / 10 || 1.2;
+      bgUpdateLabels();
+      applyTerminalFont();
+      bgPrefsSaveSoon();
+    });
+    lh.addEventListener('change', bgPrefsSave);
+  }
+
+  const sess = bgEl('bg-session');
+  if (sess) sess.addEventListener('change', () => {
+    bgState.sessionRestore = sess.checked;
+    bgPrefsSave();
+    if (!sess.checked) clearSession();   // 关掉就删掉已存内容，避免隐私残留
+  });
+
   // 面板外点击收起（与 fab 面板行为一致）
   document.addEventListener('click', (e) => {
     const panel = bgEl('bg-panel');
@@ -1175,6 +1567,7 @@ function saveConfig(server, token) {
 function clearConfig() {
   // 主动清除：标记一下，避免 onclose 又走自动重连把"重连中"闪出来
   _userCleared = true;
+  clearSession();
   localStorage.removeItem(STORAGE_SERVER);
   localStorage.removeItem(STORAGE_TOKEN);
   document.getElementById('server-url').value = '';
@@ -1227,6 +1620,10 @@ function showError(msg) {
 
 function connect() {
   _userCleared = false;   // 用户主动发起连接，恢复正常重连行为
+  // 自动连接与手动点击可能撞在一起：先断掉旧连接，否则会有两条前端同时收输出
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    try { ws.onclose = null; ws.close(); } catch (e) {}
+  }
   let url = document.getElementById('server-url').value.trim();
   const token = document.getElementById('token-input').value.trim();
 
@@ -1273,6 +1670,7 @@ function connect() {
     } else {
       if (term) term.write(new Uint8Array(e.data));
     }
+    scheduleSessionSave();
     // 保持焦点：如果用户在面板输入框中，不抢焦点
     const panelInputs = ['cluster-all-input', 'cluster-single-input'];
     if (term && term.textarea && document.activeElement !== term.textarea
@@ -1354,7 +1752,8 @@ function initTerminal() {
   term = new Terminal({
     cursorBlink: true,
     cursorStyle: 'block',
-    fontSize: 14,
+    fontSize: bgState.fontSize,
+    lineHeight: bgState.lineHeight,
     // 显式给足回滚历史：默认值极小或被他处覆盖时，翻页键会"一动不动"
     scrollback: 5000,
     // 背景图要靠 canvas 透明才能透出来；该选项只能构造时给，故常开
@@ -1421,6 +1820,12 @@ function initTerminal() {
   term.onResize(sendResize);
   window.addEventListener('resize', sendResize);
   setTimeout(sendResize, 500);
+
+  // 字号/行高面板要能触发重新排版
+  _fitTerminal = fitTerminal;
+
+  // 恢复上次会话内容（在 PTY 输出到达之前先铺历史）
+  restoreSession();
 
   // ── 命令行输入缓冲：用于拦截 dl 等特殊命令 ──
   let _inputBuf = '';
@@ -2074,6 +2479,12 @@ document.getElementById('token-input').addEventListener('keydown', (e) => {
 
 // 背景图：恢复配置与已缓存的图片（异步，不阻塞自动连接）
 bgBoot().catch(() => {});
+
+// 页面被冻结/关闭前立刻落盘会话（移动端切后台常被系统直接回收，靠 2s 防抖来不及）
+window.addEventListener('pagehide', saveSessionNow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') saveSessionNow();
+});
 </script>
 </body>
 </html>

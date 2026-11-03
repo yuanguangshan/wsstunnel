@@ -200,7 +200,7 @@ class TestClearConfirm:
         code = _code_lines(html)
         i = code.index("function clearConfig()")
         assert "_userCleared = true" in code[i:i + 400]
-        j = code.index("ws.onclose")
+        j = code.index("ws.onclose = () =>", code.index("function connect()"))
         seg = code[j:j + 1200]
         assert "if (_userCleared)" in seg, "onclose 要识别主动清除"
         assert "connect-form" in seg
