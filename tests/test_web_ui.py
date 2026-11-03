@@ -64,10 +64,19 @@ class TestFloatingButtons:
         assert 'type="button" id="page-down"' in html
 
     def test_fab_no_longer_centered_by_visual_viewport(self, html):
-        """旧实现 fab.style.top = midY - 24 —— 键盘一弹就压住 ▲。"""
+        """旧实现用 visualViewport 单独挪 ⌨ —— 键盘一弹就压住 ▲。"""
         code = "\n".join(_code_lines(html))
         assert "fab.style.top" not in code
         assert "midY" not in code
+
+    def test_group_stays_vertically_centered(self, html):
+        """翻页键组要待在屏幕垂直中间：键盘只占底部，居中才不会被遮挡。"""
+        css = re.search(r"#fab-group\s*\{(.*?)\}", html, re.S)
+        assert css, "缺少 #fab-group 样式"
+        block = css.group(1)
+        assert "top: 50%" in block, "#fab-group 应垂直居中（top: 50%）"
+        assert "margin-top: -82px" in block, "组高 164，居中偏移取其半"
+        assert "bottom:" not in block, "不要再钉在底部（会被键盘遮挡）"
 
 
 class TestScrollingLogic:
@@ -81,6 +90,22 @@ class TestScrollingLogic:
             if "term.buffer.active" in line and "term.buffer.active || term.buffer" not in line
         ]
         assert direct == [], f"存在不兼容 xterm 4.x 的写法: {direct}"
+
+    def test_paging_falls_back_to_remote(self, html):
+        """本地翻不动时必须回退为发送 ESC[5~/ESC[6~。
+
+        真机症状：页面上跑着 tmux/less（备屏），或 xterm 版本判断不出备屏，
+        旧逻辑只做本地翻页 → 按钮一动不动。
+        """
+        assert "function canScrollLocally()" in html
+        assert "canScrollLocally()" in html
+        # 回退分支仍在（发翻页键）
+        assert "0x1b, 0x5b, 0x35, 0x7e" in html
+        assert "0x1b, 0x5b, 0x36, 0x7e" in html
+
+    def test_scrollback_explicitly_set(self, html):
+        """回滚历史必须显式给足，否则 baseY 恒为 0，翻页无内容可翻。"""
+        assert re.search(r"scrollback:\s*[1-9]\d{2,}", html), "Terminal 需显式设置 scrollback"
 
     def test_per_key_throttle_instead_of_global(self, html):
         """旧版全局 300ms 节流会吞掉快速连点。"""

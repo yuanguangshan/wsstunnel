@@ -85,15 +85,16 @@
     height: 100%; background: #2ecc71; border-radius: 2px; transition: width 0.3s;
   }
 
-  /* ── 移动端浮窗控制键 ── */
   /* 悬浮按键组：▲ / ⌨ / ▼ 竖排在一个容器里，整组定位。
      修复（v1.0.13）：旧版把 ⌨ 用 visualViewport 顶到"可视区垂直中央"，
      而 ▲ 是 fixed bottom:238px —— 键盘一弹，可视区变矮，两者正好叠在一起，
      ⌨ 的 z-index 更高，点 ▲ 实际点到 ⌨，于是"翻页键点击无反应"。
-     现在整组内部用 flex 排布，物理上不可能重叠。 */
+     现在整组内部用 flex 排布，物理上不可能重叠。
+     v1.0.14：整组回到"屏幕垂直中央"——键盘只占底部，居中不会被遮挡。 */
   #fab-group {
     display: none;
-    position: fixed; right: 12px; bottom: 88px;
+    position: fixed; right: 12px;
+    top: 50%; margin-top: -82px;   /* 组高 3×48 + 2×10 = 164，取其半 */
     flex-direction: column; align-items: center; gap: 10px;
     z-index: 41;
     pointer-events: none;          /* 容器本身不挡终端，只有按钮接管点击 */
@@ -256,7 +257,7 @@
 
 <div id="top-bar">
   <span id="status">Disconnected</span>
-  <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.13</span>
+  <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.14</span>
   <button id="cluster-btn" class="hidden">📊 集群</button>
   <button id="file-btn" class="hidden">📁 上传</button>
 </div>
@@ -597,6 +598,8 @@ function initTerminal() {
     cursorBlink: true,
     cursorStyle: 'block',
     fontSize: 14,
+    // 显式给足回滚历史：默认值极小或被他处覆盖时，翻页键会"一动不动"
+    scrollback: 5000,
     fontFamily: 'Menlo, Monaco, "Fira Code", monospace',
     theme: {
       background: '#1a1a2e',
@@ -644,13 +647,13 @@ function initTerminal() {
     const rows = Math.max(5, Math.floor((el.clientHeight - padding) / ch));
     // 键盘开合也会触发 resize：xterm 重排后视口会被拉回底部，
     // 刚点 ▲ 翻上去的内容瞬间"弹回去" —— 用户看到的就是按键没反应。
-    // 这里记下"距底部还有多少行"，重排后原样恢复。
+    // 记下视口顶端所在的行，重排后还回到那一行（不在底部时）。
     const before = activeBuffer();
-    const keepOffset = before ? Math.max(0, before.baseY - before.viewportY) : 0;
+    const atBottom = !before || before.viewportY >= before.baseY;
+    const keepTopLine = before ? before.viewportY : 0;
     term.resize(cols, rows);
-    if (keepOffset > 0) {
-      const after = activeBuffer();
-      if (after) term.scrollToLine(Math.max(0, after.baseY - keepOffset));
+    if (before && !atBottom) {
+      term.scrollToLine(keepTopLine);
     }
     // 强制 viewport 撑满容器（xterm 内联样式无法用 CSS 覆盖）
     const vp = el.querySelector('.xterm-viewport');
@@ -778,7 +781,9 @@ function enableKeyboardPaging() {
     if (!term || (e.key !== 'PageUp' && e.key !== 'PageDown')) return;
     const t = e.target;
     if (t && t.tagName === 'INPUT') return;          // 服务器地址/token 输入框不抢
-    if (bufferType() === 'alternate') return;        // 备屏交给远端
+    // 本地没有可翻的历史（备屏 / baseY 为 0）就放行，让 xterm 把
+    // ESC[5~/ESC[6~ 发给远端 vim/less/tmux
+    if (!canScrollLocally()) return;
     e.preventDefault();
     e.stopPropagation();
     const moved = scrollPage(e.key === 'PageUp' ? -1 : 1);
@@ -791,13 +796,29 @@ function scrollPage(dir) {
   const before = activeBuffer();
   if (!before) return false;
   const y0 = before.viewportY;
-  if (typeof term.scrollPages === 'function') {
-    term.scrollPages(dir);
-  } else {
-    term.scrollLines(dir * Math.max(1, term.rows - 1));
+  try {
+    if (typeof term.scrollPages === 'function') {
+      term.scrollPages(dir);
+    } else {
+      term.scrollLines(dir * Math.max(1, term.rows - 1));
+    }
+  } catch (e) {
+    // 个别 xterm 版本 scrollPages 不存在/签名不同，退回 scrollLines
+    try { term.scrollLines(dir * Math.max(1, term.rows - 1)); } catch (e2) { return false; }
   }
   const after = activeBuffer();
   return !!after && after.viewportY !== y0;
+}
+
+// 这一页到底该由谁翻？
+// - 备屏（vim/less/top/tmux）：交给远端，本地翻不动
+// - 正常缓冲但还没有回滚历史（baseY 为 0）：本地也翻不动，回退给远端
+// - xterm 4.x 没有 buffer.type，用 baseY 判断同样成立（备屏 baseY 恒为 0）
+function canScrollLocally() {
+  const b = activeBuffer();
+  if (!b) return false;
+  if (b.type === 'alternate') return false;
+  return (b.baseY || 0) > 0;
 }
 
 // 翻不动时给个明确反馈，避免"点了完全没反应"的错觉
@@ -805,10 +826,12 @@ let _hintTimer = null;
 function pageHint(where) {
   const el = document.getElementById('page-hint');
   if (!el) return;
-  el.textContent = where === 'top' ? '已到最顶部（没有更早的输出）' : '已到最底部';
+  el.textContent = where === 'top' ? '已到最顶部（没有更早的输出）'
+    : where === 'bottom' ? '已到最底部'
+    : '当前没有可翻的历史，已把翻页键发给远端';
   el.classList.add('show');
   clearTimeout(_hintTimer);
-  _hintTimer = setTimeout(() => el.classList.remove('show'), 1200);
+  _hintTimer = setTimeout(() => el.classList.remove('show'), 1400);
 }
 
 enableKeyboardPaging();
@@ -997,12 +1020,18 @@ function fabSend(key) {
   else if (key === 'page-up' || key === 'page-down') {
     // 翻页分两种场景，别一律把 ESC[5~/ESC[6~ 丢给远端：
     // - 备屏（less/vim/top/tmux 等全屏程序）：翻页由远端程序负责，发按键；
-    // - 正常缓冲（裸 bash 提示符）：发过去也没人理，翻本地回滚历史才有用。
-    if (bufferType() !== 'alternate') {
+    // - 正常缓冲（裸 bash 提示符）：本地有回滚历史就翻本地，否则才发按键。
+    //   本地翻不动时必须回退为“发按键”—— 否则在 tmux/less 里、或 xterm
+    //   判定不了备屏（旧版本没有 buffer.type）时，就是干瞪眼一动不动。
+    if (canScrollLocally()) {
       const moved = scrollPage(key === 'page-up' ? -1 : 1);
-      if (!moved) pageHint(key === 'page-up' ? 'top' : 'bottom');
+      if (moved) return;             // 本地翻成功，不必打扰远端
+      pageHint(key === 'page-up' ? 'top' : 'bottom');
       return;
     }
+    // 备屏不提示（远端程序会翻）；正常缓冲但没历史时给一句说明
+    const b = activeBuffer();
+    if (!b || b.type !== 'alternate') pageHint('empty');
     bytes = key === 'page-up' ? [0x1b, 0x5b, 0x35, 0x7e] : [0x1b, 0x5b, 0x36, 0x7e];
   }
   else if (key === 'arrow-up') bytes = [0x1b, 0x5b, 0x41];
@@ -1140,30 +1169,31 @@ document.addEventListener('click', function(e) {
   }
 });
 
-// ── 键盘弹出时整组按键贴着可视区底边上移 ──
-// 旧实现把 ⌨ 单独顶到"可视区垂直中央"（midY - 24），
-// 而 ▲ 是 fixed bottom:238px —— 键盘一弹可视区变矮，两者正好重叠，
-// ⌨ 的 z-index 更高，点 ▲ 实际点到 ⌨，这就是翻页键"点了没反应"的根因。
-// 现在整组一起动，内部间距由 flex 保证，永不可能互相覆盖。
+// ── 悬浮按键组：始终待在“可视区垂直中央” ──
+// 键盘只占屏幕底部，居中不会被遮挡；键盘弹出时可视区变矮，
+// 按 visualViewport 重新居中即可（整组一起动，内部间距由 flex 保证）。
 (function() {
   const group = document.getElementById('fab-group');
-  if (!group || !window.visualViewport) return;
+  if (!group) return;
   const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  function applyKbOffset() {
+  function placeGroup() {
     const vv = window.visualViewport;
-    // Android Chrome 键盘弹出时布局视口不缩、fixed 元素会被键盘盖住 → 手动上移；
-    // iOS 的 fixed 元素本来就会贴着键盘上方，再移会飞掉。
-    const covered = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-    const lift = (!isIOS && covered > 8) ? covered : 0;
-    group.style.transform = lift ? `translateY(${-lift}px)` : '';
+    if (!vv) return;
+    const gh = group.offsetHeight || 164;
+    // iOS 的 fixed 以视觉视口为基准；Android Chrome 以布局视口为基准，需补 offsetTop
+    const base = isIOS ? 0 : vv.offsetTop;
+    const top = base + Math.max(4, (vv.height - gh) / 2);
+    group.style.top = Math.round(top) + 'px';
+    group.style.marginTop = '0px';
+    group.style.bottom = 'auto';
     const panel = document.getElementById('fab-panel');
     if (panel && panel.classList.contains('show')) positionFabPanel();
   }
-  window.visualViewport.addEventListener('resize', applyKbOffset);
-  window.visualViewport.addEventListener('scroll', applyKbOffset);
-  window.addEventListener('resize', applyKbOffset);
-  applyKbOffset();
+  window.visualViewport?.addEventListener('resize', placeGroup);
+  window.visualViewport?.addEventListener('scroll', placeGroup);
+  window.addEventListener('resize', placeGroup);
+  placeGroup();
 })();
 
 // ── 集群面板 ──
