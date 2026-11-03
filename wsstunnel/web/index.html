@@ -93,13 +93,13 @@
   #page-up, #page-down {
     display: none;
     position: fixed; right: 14px;
-    width: 40px; height: 40px; border-radius: 50%;
+    width: 48px; height: 48px; border-radius: 50%;
     padding: 0; margin: 0;
     -webkit-appearance: none; appearance: none;
     background: rgba(13, 40, 70, 0.30);
     border: 1px solid rgba(255,255,255,0.08);
     color: rgba(255,255,255,0.50);
-    font-size: 14px; line-height: 1;
+    font-size: 16px; line-height: 1;
     align-items: center; justify-content: center;
     cursor: pointer; z-index: 39;
     opacity: 0.26;
@@ -954,22 +954,46 @@ document.getElementById('fab').addEventListener('click', function() {
 });
 
 // 主球上下的半透明翻页键（移动端免开面板直接翻页）
+// 翻页统一入口：pointerdown / touchstart / click 可能同时到，300ms 内只认一次
+let _pageFireAt = 0;
+function firePage(key) {
+  const now = Date.now();
+  if (now - _pageFireAt < 300) return;
+  _pageFireAt = now;
+  fabSend(key);
+}
+
 for (const [id, key] of [['page-up', 'page-up'], ['page-down', 'page-down']]) {
   const el = document.getElementById(id);
   if (!el) continue;
-  let last = 0;
-  const fire = (e) => {
+  // pointerdown 比 click 更早、不受 300ms 延迟与双击缩放影响
+  el.addEventListener('pointerdown', (e) => {
     if (e.cancelable) e.preventDefault();
     e.stopPropagation();
-    const now = Date.now();
-    if (now - last < 350) return;   // touch 后浏览器又合成 click，只认第一次
-    last = now;
-    fabSend(key);
-  };
-  // pointerdown 比 click 更早、不受 300ms 延迟与双击缩放影响，iOS/微信 X5 更可靠
-  el.addEventListener('pointerdown', fire, { passive: false });
-  el.addEventListener('click', fire);   // 老浏览器兜底
+    firePage(key);
+  }, { passive: false });
+  el.addEventListener('click', (e) => { e.stopPropagation(); firePage(key); });
 }
+
+// 大热区兜底：微信 X5 偶尔吞掉 fixed 元素的元素级事件。
+// 在 document 上按触摸坐标判定，热区半径 44px（按钮 48px，四周各多 20px）。
+document.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+  for (const [id, key] of [['page-up', 'page-up'], ['page-down', 'page-down']]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (!r.width) continue;  // 桌面端未显示
+    const dx = t.clientX - (r.left + r.width / 2);
+    const dy = t.clientY - (r.top + r.height / 2);
+    if (dx * dx + dy * dy <= 44 * 44) {
+      if (e.cancelable) e.preventDefault();
+      firePage(key);
+      return;
+    }
+  }
+}, { passive: false });
 
 document.getElementById('fab-panel').addEventListener('click', function(e) {
   const btn = e.target.closest('button');
