@@ -69,6 +69,13 @@ def _recv_until(ws: "websocket.WebSocket", pred, timeout: float = 120.0,
     try:
         while True:
             msg = ws.recv()
+            # relay 会把**任意**后端的 PTY 输出以二进制帧广播给所有前端
+            # （relay._forward_binary_to_frontends 未按 target 过滤），这些帧
+            # 不属于文件传输协议，跳过即可。原实现直接对 bytes 调
+            # .startswith(str) → TypeError，传输期间只要有别的后端刷屏
+            # （spinner、watch、top 之类），put/get 必定失败。
+            if not isinstance(msg, str):
+                continue
             if fatal_error and msg.startswith("[Error]"):
                 raise RuntimeError(f"Relay error: {msg}")
             if pred(msg):
@@ -282,6 +289,9 @@ def get(
     with open(part_path, "wb") as f:
         while True:
             resp = ws.recv()
+            # 同上：跳过其他后端 PTY 输出的二进制帧
+            if not isinstance(resp, str):
+                continue
             if resp.startswith("__FILE_BEGIN:"):
                 _, _, size_str = resp.partition(":")
                 _, size_str = size_str.rsplit(":", 1)

@@ -315,6 +315,20 @@ class TestRecvUntil:
         ])
         assert _recv_until(ws, lambda m: m.startswith("__FILE_")) == "__FILE_OK:100"
 
+    def test_skips_binary_frames(self):
+        """其他后端的 PTY 二进制输出必须跳过。
+
+        回归：1.0.4 的 _recv_until 直接 msg.startswith(str)，relay 广播来
+        的二进制帧一出现就 TypeError，put/get 100% 失败。
+        """
+        ws = self.FakeSyncWS([
+            b"\x1b[2K\x1b[38;5;169m\xe2\xa0\xa7 Working\x1b[39m",  # 别的后端刷屏
+            "[Info] Connected backends: bk1(pipe)",
+            b"\x00\x01\x02",
+            "__FILE_OK:100",
+        ])
+        assert _recv_until(ws, lambda m: m.startswith("__FILE_")) == "__FILE_OK:100"
+
     def test_error_fails_fast(self):
         ws = self.FakeSyncWS(["[Error] No backends connected. Use LIST to check."])
         with pytest.raises(RuntimeError, match="No backends"):
