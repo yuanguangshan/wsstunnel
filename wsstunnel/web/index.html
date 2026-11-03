@@ -87,10 +87,30 @@
   /* ── 移动端浮窗控制键 ── */
   @media (pointer: coarse) {
     #fab { display: flex !important; }
+    #page-up, #page-down { display: flex !important; }
   }
+  /* 主悬浮球上下的翻页键：几乎透明，不遮挡内容 */
+  #page-up, #page-down {
+    display: none;
+    position: fixed; right: 14px;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(13, 40, 70, 0.30);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.50);
+    font-size: 14px; line-height: 1;
+    align-items: center; justify-content: center;
+    cursor: pointer; z-index: 39;
+    opacity: 0.26;
+    transition: opacity 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  #page-up { bottom: 158px; }   /* 主球上方 */
+  #page-down { bottom: 46px; }  /* 主球下方，避开右下角"清除"按钮（bottom~34px） */
+  #page-up:active, #page-down:active { opacity: 0.72; }
   #fab {
     display: none;
-    position: fixed; right: 10px; bottom: 80px;
+    position: fixed; right: 10px; bottom: 102px;
     width: 48px; height: 48px; border-radius: 50%;
     background: #0f3460; color: #ccc;
     border: 2px solid #1a4a8a;
@@ -264,16 +284,17 @@
 </div>
 
 <!-- 移动端浮窗控制键 -->
+<!-- 主球上下的翻页键：几乎透明，点一下翻一页 -->
+<div id="page-up" title="向上翻页" aria-label="向上翻页">▲</div>
+<div id="page-down" title="向下翻页" aria-label="向下翻页">▼</div>
 <div id="fab">⌨</div>
 <div id="fab-panel">
-  <div class="row wide">
+  <div class="row">
     <button data-key="escape">Esc</button>
     <button data-key="a">A↰</button>
     <button data-key="e">E↱</button>
     <button data-key="u">U</button>
     <button data-key="k">K</button>
-    <button data-key="page-up" title="向上翻页（PgUp）">PgUp</button>
-    <button data-key="page-down" title="向下翻页（PgDn）">PgDn</button>
   </div>
   <div class="row">
     <button data-key="tab">Tab</button>
@@ -927,6 +948,15 @@ document.getElementById('fab').addEventListener('click', function() {
     else setTimeout(() => term.textarea.focus(), 100);
   }
 });
+
+// 主球上下的半透明翻页键（移动端免开面板直接翻页）
+for (const [id, key] of [['page-up', 'page-up'], ['page-down', 'page-down']]) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fabSend(key);
+  });
+}
 
 document.getElementById('fab-panel').addEventListener('click', function(e) {
   const btn = e.target.closest('button');

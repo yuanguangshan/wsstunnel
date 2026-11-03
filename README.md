@@ -818,6 +818,7 @@ FileNotFoundError: /bin/bash
 | v0.18.15 | 面板打开时收起系统键盘，禁止页面自动缩放 | 移动端体验优化 |
 | v1.0.6 | 浮窗 `W`(Ctrl-W) 改为 **PgUp/PgDn** 翻页：正常缓冲翻本地回滚历史，备屏（`less`/`vim`/`tmux`）改发 `ESC[5~`/`ESC[6~` | 仅 Web 终端更新，后端无需升级 |
 | v1.0.7 | 修复真机翻页：`touch-action:none` 直接覆盖 `.xterm-viewport`（iOS/微信 WebView 手势不再被浏览器抢走）、**物理键盘 PageUp/PageDown** 本地翻页（备屏放行给远端）、行高适配 xterm 5.x `css.cell.height` | 仅 Web 终端更新，后端无需升级 |
+| v1.0.8 | 主悬浮球上下新增**半透明 ▲/▼ 翻页键**（opacity 0.26，不遮挡内容、免开面板一键翻页）；浮窗面板内 PgUp/PgDn 移除，整组上移避开“清除”按钮 | 仅 Web 终端更新，后端无需升级 |
 
 ## 扩展阅读
 
