@@ -122,6 +122,23 @@ class TestQuickCommands:
         assert "wsstunnel_quick_cmds" in code
         assert "QUICK_MAX" in code
 
+    def test_default_command_groups(self, html):
+        """默认命令覆盖系统状态 + 网络诊断两组（v1.0.19）。"""
+        code = _code_lines(html)
+        for cmd in (
+            "uptime", "df -h", "free -h", "top -bn1 | head -20",
+            "ps aux | head -20", "uname -a",
+            "ss -tlnp", "ip addr", "api.ip.sb", "ping -c 4 1.1.1.1", "ss -s",
+        ):
+            assert cmd in code, f"默认快捷命令缺少 {cmd}"
+
+    def test_defaults_version_merge(self, html):
+        """默认列表升级后，老用户也要能拿到新命令，且保留自己加的。"""
+        code = _code_lines(html)
+        assert "QUICK_DEFAULT_VERSION" in code
+        assert "QUICK_DEFAULTS_VER_KEY" in code
+        assert "QUICK_DEFAULT.concat(custom)" in code, "合并顺序：新默认在前，自定义在后"
+
     def test_send_uses_pty_channel(self, html):
         code = _code_lines(html)
         i = code.index("function quickSend(")

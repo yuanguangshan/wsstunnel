@@ -495,7 +495,7 @@
   <div class="menu-sep"></div>
   <div class="menu-foot">
     <span>版本</span>
-    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.18</span>
+    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.19</span>
   </div>
 </div>
 
@@ -807,31 +807,60 @@ function clearConfirmShow(show) {
 //  快捷命令面板：移动端常用命令一键发送，可增删，存 localStorage
 // ──────────────────────────────────────────────
 const QUICK_KEY = 'wsstunnel_quick_cmds';
+const QUICK_DEFAULTS_VER_KEY = 'wsstunnel_quick_cmds_ver';
+const QUICK_DEFAULT_VERSION = 2;   // 默认列表版本：升级后老用户也能拿到新增的常用命令
 const QUICK_MAX = 30;
 const QUICK_DEFAULT = [
-  { name: '列目录', cmd: 'ls -la' },
+  // ── 系统状态 ──
+  { name: '运行时长', cmd: 'uptime' },
   { name: '磁盘', cmd: 'df -h' },
   { name: '内存', cmd: 'free -h' },
-  { name: '进程', cmd: 'ps aux --sort=-%cpu | head' },
+  { name: 'CPU', cmd: 'top -bn1 | head -20' },
+  { name: '进程', cmd: 'ps aux | head -20' },
+  { name: '内核', cmd: 'uname -a' },
+  // ── 网络诊断 ──
+  { name: '监听端口', cmd: 'ss -tlnp' },
+  { name: '网卡/IP', cmd: 'ip addr' },
+  { name: '出口IP', cmd: 'curl -s https://api.ip.sb/ip' },
+  { name: '出网测试', cmd: 'curl -I -s https://www.baidu.com | head -5' },
+  { name: 'Ping', cmd: 'ping -c 4 1.1.1.1' },
+  { name: '连接数', cmd: 'ss -s' },
+  // ── 基础 ──
+  { name: '列目录', cmd: 'ls -la' },
   { name: 'Docker', cmd: 'docker ps' },
 ];
 
 let quickCmds = [];
 
+function quickClean(list) {
+  return list
+    .filter((x) => x && typeof x.cmd === 'string' && x.cmd.trim())
+    .map((x) => ({
+      name: String(x.name || '').slice(0, 20),
+      cmd: String(x.cmd).slice(0, 500),
+    }))
+    .slice(0, QUICK_MAX);
+}
+
+function quickMarkDefaultsVer() {
+  try { localStorage.setItem(QUICK_DEFAULTS_VER_KEY, String(QUICK_DEFAULT_VERSION)); } catch (e) {}
+}
+
 function quickLoad() {
   try {
     const raw = localStorage.getItem(QUICK_KEY);
-    if (!raw) return QUICK_DEFAULT.slice();
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return QUICK_DEFAULT.slice();
-    return arr
-      .filter((x) => x && typeof x.cmd === 'string' && x.cmd.trim())
-      .map((x) => ({
-        name: String(x.name || '').slice(0, 20),
-        cmd: String(x.cmd).slice(0, 500),
-      }))
-      .slice(0, QUICK_MAX);
-  } catch (e) { return QUICK_DEFAULT.slice(); }
+    if (!raw) { quickMarkDefaultsVer(); return QUICK_DEFAULT.slice(); }
+    const arr = quickClean(JSON.parse(raw));
+    const ver = Number(localStorage.getItem(QUICK_DEFAULTS_VER_KEY) || 0);
+    if (ver >= QUICK_DEFAULT_VERSION) return arr;
+    // 默认列表升级：新默认放前面，用户自己加过的命令原样保留
+    // 按 cmd + name 双重去重：旧默认里被改名/改命令的条目（如「进程」）不会再重复一份
+    const defaultCmds = new Set(QUICK_DEFAULT.map((d) => d.cmd));
+    const defaultNames = new Set(QUICK_DEFAULT.map((d) => d.name));
+    const custom = arr.filter((x) => !defaultCmds.has(x.cmd) && !defaultNames.has(x.name));
+    quickMarkDefaultsVer();
+    return QUICK_DEFAULT.concat(custom).slice(0, QUICK_MAX);
+  } catch (e) { quickMarkDefaultsVer(); return QUICK_DEFAULT.slice(); }
 }
 
 function quickSave() {
@@ -936,6 +965,7 @@ function quickRemove(idx) {
 
 (function bindQuickUI() {
   quickCmds = quickLoad();
+  quickSave();          // 合并/默认结果落盘，下次加载直接用，不依赖版本迁移逻辑
   quickRender();
   const btn = document.getElementById('quick-btn');
   if (btn) btn.addEventListener('click', (e) => {
