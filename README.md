@@ -817,6 +817,7 @@ FileNotFoundError: /bin/bash
 | v0.18.14 | 移动端浮窗控制面板（⌨ 圆点展开 3 行布局） | 支持 Ctrl+A/E/U/K/W、方向键、复制全屏/本行 |
 | v0.18.15 | 面板打开时收起系统键盘，禁止页面自动缩放 | 移动端体验优化 |
 | v1.0.6 | 浮窗 `W`(Ctrl-W) 改为 **PgUp/PgDn** 翻页：正常缓冲翻本地回滚历史，备屏（`less`/`vim`/`tmux`）改发 `ESC[5~`/`ESC[6~` | 仅 Web 终端更新，后端无需升级 |
+| v1.0.7 | 修复真机翻页：`touch-action:none` 直接覆盖 `.xterm-viewport`（iOS/微信 WebView 手势不再被浏览器抢走）、**物理键盘 PageUp/PageDown** 本地翻页（备屏放行给远端）、行高适配 xterm 5.x `css.cell.height` | 仅 Web 终端更新，后端无需升级 |
 
 ## 扩展阅读
 

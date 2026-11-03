@@ -9,8 +9,14 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; touch-action: manipulation; }
   #terminal { width: 100vw; height: 100vh; padding: 8px; }
-  /* 移动端：手势交给 JS 统一处理，避免浏览器抢占后 touchmove 被 cancel */
-  #terminal, #terminal .xterm { touch-action: none; }
+  /* 移动端：手势交给 JS 统一处理，避免浏览器抢占后 touchmove 被 cancel。
+     必须直接覆盖 .xterm-viewport / .xterm-screen：iOS Safari 与微信 WebView
+     不会沿祖先链传播 touch-action，可滚动的 viewport 会抢走手势做原生滚动，
+     导致 JS 收不到 touchmove（手指滑动"翻不动"的根因）。 */
+  #terminal,
+  #terminal .xterm,
+  #terminal .xterm-viewport,
+  #terminal .xterm-screen { touch-action: none; }
   #terminal .xterm { height: 100%; }
   #terminal .xterm-viewport { height: 100% !important; }
   #top-bar {
@@ -648,10 +654,15 @@ function enableTouchScroll() {
 
   const cellHeight = () => {
     try {
+      // xterm 5.x: dimensions = {css:{cell:{height}}, device:{...}}
+      // （旧版 4.x 才是顶层 actualCellHeight，5.x 取不到会退回 17px 误差）
       const d = term && term._core?._renderService?.dimensions;
-      if (d && d.actualCellHeight > 0) return d.actualCellHeight;
+      const h = d?.css?.cell?.height || d?.device?.cell?.height || d?.actualCellHeight;
+      if (h > 0) return h;
     } catch {}
-    return 17;
+    // 内部 API 变动时的兜底：直接从 DOM 量真实行高
+    const row = document.querySelector('#terminal .xterm-rows > div');
+    return (row && row.clientHeight) || 17;
   };
 
   let startY = 0, applied = 0, moved = false;
@@ -678,7 +689,26 @@ function enableTouchScroll() {
   }, { passive: false });
 
   el.addEventListener('touchend', () => { moved = false; applied = 0; }, { passive: true });
+  el.addEventListener('touchcancel', () => { moved = false; applied = 0; }, { passive: true });
 }
+
+// 键盘 PageUp/PageDown：本地翻回滚历史。
+// 默认 xterm 会把它们转成 ESC[5~/ESC[6~ 发给远端——裸 bash 无人处理，
+// 反而把视口拉回底部（scrollOnUserInput），所以必须在捕获阶段截住。
+// 全屏程序（vim/less/tmux）走备屏，翻页由远端负责，放行。
+function enableKeyboardPaging() {
+  document.addEventListener('keydown', (e) => {
+    if (!term || (e.key !== 'PageUp' && e.key !== 'PageDown')) return;
+    const t = e.target;
+    if (t && t.tagName === 'INPUT') return;          // 服务器地址/token 输入框不抢
+    if (term.buffer.active.type === 'alternate') return;  // 备屏交给远端
+    e.preventDefault();
+    e.stopPropagation();
+    term.scrollPages(e.key === 'PageUp' ? -1 : 1);
+  }, true);  // capture：必须早于 xterm textarea 的 keydown
+}
+
+enableKeyboardPaging();
 
 // ── 文件传输 ──
 let _downloadState = null; // {b64path, path, size, chunks:[], received, idx}
