@@ -120,11 +120,12 @@
     align-items: center; justify-content: center;
     font-size: 22px; cursor: pointer; z-index: 40;
     box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-    transition: transform 0.15s;
+    opacity: 0.32;
+    transition: opacity 0.2s, transform 0.15s;
     user-select: none; -webkit-user-select: none;
   }
-  #fab:active { transform: translateY(-50%) scale(0.92); }
-  #fab.active { background: #1a4a8a; }
+  #fab:active { opacity: 0.85; transform: translateY(-50%) scale(0.92); }
+  #fab.active { opacity: 0.85; background: #1a4a8a; }
 
   #fab-panel {
     display: none;
