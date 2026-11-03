@@ -410,7 +410,7 @@ open "wsstunnel/web/index.html?server=wss://your-vps:443&token=mysecret"
 - **原生终端体验**：颜色、光标、`vim`、`top`、`htop` 全部原生支持
 - **📁 文件上传**：顶部工具栏点按钮选文件，传到 shell 当前目录
 - **📥 文件下载**：shell 中输入 `dl <path>`，浏览器自动弹出下载
-- **⌨ 移动端控制面板**：右下角浮窗，支持 Ctrl+A/E/U/K、**PgUp/PgDn 翻页**、方向键、复制
+- **⌨ 移动端控制面板**：右下角 ▲/⌨/▼ 悬浮组（▲/▼ 一键翻页），展开面板支持 Ctrl+A/E/U/K、PgUp/PgDn、方向键、复制
 - **`\r` 正确处理**：xterm.js 是完整终端模拟器，不是文本显示
 - **窗口大小自适应**：`__RESIZE` 自动同步
 - **URL token 认证**：`?token=xxx` 自动连接，无需手动输入
@@ -823,6 +823,9 @@ FileNotFoundError: /bin/bash
 | v1.0.10 | 翻页键改用 `<button>` + `pointerdown` 直接响应（不等 click 合成），350ms 去重；修复 iOS/微信 X5 上 fixed 定位 div 点击无反应 | 仅 Web 终端更新，后端无需升级 |
 | v1.0.11 | 主悬浮球常态透明度 0.32（按下/展开面板时 0.85），与 ▲/▼ 翻页键风格统一，不再遮挡终端内容 | 仅 Web 终端更新，后端无需升级 |
 | v1.0.12 | 翻页键可视尺寸 40→48px，**热区扩大到 88px 直径**（四周各多 20px）；新增 document 级 touchstart 坐标兜底，微信 X5 吞掉元素事件也能翻页 | 仅 Web 终端更新，后端无需升级 |
+| v1.0.13 | **翻页键真机失效的根因修复**：⌨ 主球此前被 `visualViewport` 顶到"可视区垂直中央"，键盘一弹可视区变矮，正好压在 ▲ 上（z-index 更高），点 ▲ 全被 ⌨ 吃掉。改为 ▲/⌨/▼ 同组 flex 竖排、整组随键盘上移，物理上不可能重叠；节流由全局 300ms 改为每键 180ms（连点不丢）；新增"已到顶部/底部"轻提示（翻不动也有反馈）；面板补回 PgUp/PgDn 冗余入口；xterm CDN 锁 5.3.0 + buffer API 兼容 4.x（未锁版本时 `term.buffer.active` 抛错会静默吞掉点击）；键盘开合重排时保留滚动位置；HTML 响应加 `Cache-Control: no-store` | **必须升级 relay 并强刷页面**（页面由 relay 内嵌分发） |
+
+> ⚠️ Web 终端页面是**内嵌在 relay 里分发**的：上面标"仅 Web 终端更新"的版本，实际仍要升级 relay（或直接替换 `wsstunnel/web/index.html`）并在手机端强刷，否则真机跑的还是旧页面——v1.0.8~v1.0.12 的翻页键修复就曾因此"永远不生效"。页面右上角 `vX.Y.Z` 可用来确认真机加载的版本。
 
 ## 扩展阅读
 
