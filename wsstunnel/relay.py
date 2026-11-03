@@ -27,14 +27,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import ssl
 import time
 from typing import Any
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 import websockets
@@ -101,8 +104,393 @@ _INDEX_HTML = _load_index_html()
 _WS_MAX_FRAME = 2 ** 20  # 1MB
 
 
-async def _http_request_handler(connection: Any, request: Any) -> Response | None:
-    """处理普通 HTTP 请求，返回 Web 终端页面。
+# ──────────────────────────────────────────────
+#  背景图代理（GET /api/bg?url=<urlencoded>&refresh=1）
+# ──────────────────────────────────────────────
+#
+# 为什么需要服务端代理：Web 终端允许用户填写任意图片 URL 作为背景，
+# 浏览器直接 <img src=远端URL> 时该图片既不能被页面 JS 读取、也不能可靠
+# 写入 CacheStorage；而代理后同源、可缓存（这正是本端点的由来）。
+#
+# 安全前提：这是公网可达、无鉴权的 GET 端点（页面本身不做鉴权），因此
+# 必须自己防 SSRF —— 攻击者可以让 relay 去请求云厂商元数据
+# （169.254.169.254）、内网管理口、本机回环服务。
+#
+# 防护手段（及局限，务必如实告知后来者）：
+#   1. 只允许 http/https，拒绝 file:/javascript:/ftp: 等 scheme；
+#   2. 解析主机名，只要有一个解析结果落在私有/环回/链路本地/保留/组播
+#      地址段就返回 403（每次重定向都重新校验，防 302 绕过）；
+#   3. 不跟随无限重定向（最多 3 次）、限制总大小 8MB 与 8s 超时。
+# 局限（TOCTOU / DNS rebinding）：校验时解析一次、httpx 真正连接时又解析
+# 一次；恶意 DNS 可以在两次解析之间返回公网 IP 再换成 127.0.0.1。彻底
+# 修法是"校验后把 IP 钉死再连"（需自行处理 Host/SNI），当前未做 —— 因为
+# 该端点只返回图片给浏览器，不把响应体返回给攻击者，利用面有限。若要
+# 加固，应在 _bg_download 里用解析到的 IP 直连并显式设置 Host 头。
+
+# 总大小上限：背景图 8MB 已远超合理值，超出按 502 处理（不落盘，防磁盘打满）。
+_BG_MAX_BYTES = 8 * 1024 * 1024
+# 连接 + 读取超时（秒）。
+_BG_TIMEOUT = 8.0
+# 最多跟随的重定向次数（每次目标都重新走 SSRF 校验）。
+_BG_MAX_REDIRECTS = 3
+# 命中缓存也照样给浏览器一天缓存，减少往返。
+_BG_CACHE_CONTROL = "public, max-age=86400"
+_BG_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_BG_REASON = {
+    200: "OK",
+    400: "Bad Request",
+    403: "Forbidden",
+    502: "Bad Gateway",
+}
+# ipaddress 的 is_private 覆盖 10/8、172.16/12、192.168/16、127/8、
+# 169.254/16、fc00::/7、fe80::/10 等，但运营商级 NAT 段 100.64.0.0/10
+# 在部分 Python 版本里不算 private，需单独判定。
+_BG_EXTRA_BLOCKED_NETS = (ipaddress.ip_network("100.64.0.0/10"),)
+
+# 198.18.0.0/15 是 RFC 2544 benchmark 保留段，现实中没有设备会用它；
+# 但 Clash / Surge 等代理的 fake-IP 模式会把**所有**域名解析成该段地址
+# （本机实测 picsum.photos → 198.18.4.174）。Python 的 is_private 把它
+# 判成私网，若一并拒绝，开着代理的机器上背景图代理会完全不可用。
+# 放行它不构成内网 SSRF：该段没有任何真实内网服务，连接实际由本地代理
+# 软件接管；真正的内网段（10/8、127/8、169.254/16 等）仍然全部拦截。
+_BG_FAKE_IP_NET = ipaddress.ip_network("198.18.0.0/15")
+
+
+class _BgError(Exception):
+    """背景图代理的内部错误：``status`` 直接映射为 HTTP 状态码。
+
+    Args:
+        status: 返回给浏览器的 HTTP 状态码（400/403/502）。
+        message: 简短错误说明（会作为 text/plain 响应体）。
+    """
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def _bg_ip_blocked(ip_str: str) -> bool:
+    """判断 IP 字面量是否属于禁止访问的内网/保留地址段。
+
+    用于 SSRF 防护：命中任一条件即拒绝（含 IPv4-mapped IPv6 形式，
+    如 ``::ffff:127.0.0.1``）。
+
+    Args:
+        ip_str: IP 地址字符串（v4 或 v6）。
+
+    Returns:
+        ``True`` 表示应当拒绝。
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        # 不是合法 IP：调用方应把它当主机名去解析，这里按"可疑"处理。
+        return True
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    # 代理 fake-IP 段：放行（见 _BG_FAKE_IP_NET 处注释）
+    if ip.version == 4 and ip in _BG_FAKE_IP_NET:
+        return False
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return True
+    return any(ip in net for net in _BG_EXTRA_BLOCKED_NETS)
+
+
+async def _bg_resolve_hosts(host: str) -> list[str]:
+    """把主机名解析成 IP 列表；主机名本身就是 IP 字面量时直接返回。
+
+    Args:
+        host: 不含端口的主机名或 IP 字面量（IPv6 不带方括号）。
+
+    Returns:
+        IP 字符串列表（可能为空，由调用方判定）。
+    """
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return [host]
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise _BgError(502, f"cannot resolve host: {host}") from e
+    # 去重但保持顺序，便于日志排查。
+    hosts: list[str] = []
+    for info in infos:
+        addr = str(info[4][0])
+        if addr not in hosts:
+            hosts.append(addr)
+    return hosts
+
+
+async def _bg_validate_url(url: str) -> str:
+    """校验背景图目标 URL，合法则原样返回，否则抛 :class:`_BgError`。
+
+    校验内容：scheme 仅 http/https、必须有主机名、端口合法，且解析出的
+    所有 IP 都不能是内网/环回/链路本地/保留地址（403）。
+
+    Args:
+        url: 待校验的绝对 URL。
+
+    Returns:
+        规范化后（原样）的 URL。
+
+    Raises:
+        _BgError: 400 表示 URL 本身不合法；403 表示目标指向受保护地址；
+            502 表示域名解析失败。
+    """
+    if not url:
+        raise _BgError(400, "missing url")
+    try:
+        parsed = urlparse(url)
+        port = parsed.port  # 端口非法（如 :abc）在这里抛 ValueError
+    except ValueError as e:
+        raise _BgError(400, "invalid url") from e
+    if parsed.scheme not in ("http", "https"):
+        raise _BgError(400, "only http/https allowed")
+    host = parsed.hostname
+    if not host:
+        raise _BgError(400, "missing host")
+    if port is not None and not (1 <= port <= 65535):
+        raise _BgError(400, "invalid port")
+    if host.lower() == "localhost" or host.lower().endswith(".localhost"):
+        raise _BgError(403, "private address blocked")
+    hosts = await _bg_resolve_hosts(host)
+    if not hosts:
+        raise _BgError(502, "cannot resolve host")
+    if any(_bg_ip_blocked(addr) for addr in hosts):
+        raise _BgError(403, "private address blocked")
+    return url
+
+
+async def _bg_download(url: str) -> tuple[bytes, str]:
+    """下载背景图，返回 ``(图片字节, MIME)``。
+
+    仅接受 200 且 Content-Type 为 ``image/*`` 的响应；手工跟随最多
+    :data:`_BG_MAX_REDIRECTS` 次重定向（每次目标都重新做 SSRF 校验）；
+    流式累加并限制总大小，超限立即中止。
+
+    Args:
+        url: 已经过/待校验的图片 URL。
+
+    Returns:
+        ``(body, mime)`` 二元组。
+
+    Raises:
+        _BgError: 400/403（URL 不合法或被 SSRF 防护拒绝）、
+            502（网络失败、非 200、非图片、空响应、超限、重定向过多）。
+    """
+    timeout = httpx.Timeout(_BG_TIMEOUT)
+    current = url
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        # 初始请求 + 最多 3 次重定向 = 最多 4 次请求。
+        for hop in range(_BG_MAX_REDIRECTS + 1):
+            current = await _bg_validate_url(current)
+            try:
+                async with client.stream(
+                    "GET",
+                    current,
+                    headers={
+                        "User-Agent": "wsstunnel-bg-proxy/1.0",
+                        "Accept": "image/*",
+                    },
+                ) as resp:
+                    if resp.status_code in _BG_REDIRECT_STATUSES:
+                        if hop >= _BG_MAX_REDIRECTS:
+                            raise _BgError(502, "too many redirects")
+                        location = resp.headers.get("location")
+                        if not location:
+                            raise _BgError(502, "redirect without location")
+                        current = urljoin(current, location)
+                        continue
+                    if resp.status_code != 200:
+                        raise _BgError(502, f"upstream HTTP {resp.status_code}")
+                    ctype = (
+                        resp.headers.get("content-type", "")
+                        .split(";")[0]
+                        .strip()
+                        .lower()
+                    )
+                    if not ctype.startswith("image/"):
+                        raise _BgError(502, "not an image")
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in resp.aiter_bytes():
+                        total += len(chunk)
+                        if total > _BG_MAX_BYTES:
+                            raise _BgError(502, "image too large")
+                        chunks.append(chunk)
+                    if not total:
+                        raise _BgError(502, "empty response")
+                    return b"".join(chunks), ctype
+            except _BgError:
+                raise
+            except (httpx.HTTPError, OSError) as e:
+                # 带上异常类型：部分 httpx 异常 str() 为空（如代理握手失败），
+                # 只写 {e} 会得到 "download failed: " 这种无法排查的消息。
+                raise _BgError(
+                    502, f"download failed: {type(e).__name__}: {e}"
+                ) from e
+    raise _BgError(502, "too many redirects")
+
+
+def _bg_cache_dir() -> str:
+    """返回磁盘缓存目录：``WSSTUNNEL_BG_CACHE`` 优先，否则 ``~/.wsstunnel/bg-cache``。"""
+    env_dir = os.environ.get("WSSTUNNEL_BG_CACHE", "").strip()
+    if env_dir:
+        return env_dir
+    return os.path.join(os.path.expanduser("~"), ".wsstunnel", "bg-cache")
+
+
+def _bg_cache_paths(url: str) -> tuple[str, str]:
+    """返回 ``(图片本体路径, 元数据路径)``。
+
+    文件名是 ``sha256(url)`` 的十六进制：同一 URL 稳定命中，不同 URL 不冲突，
+    也不会有路径穿越/长文件名问题。元数据是同名 ``.json``。
+    """
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    base = os.path.join(_bg_cache_dir(), digest)
+    return base, base + ".json"
+
+
+def _bg_cache_read(url: str) -> tuple[bytes, str] | None:
+    """读取缓存，任一环节不可信则返回 ``None``（等价于未命中）。
+
+    元数据缺失/损坏、MIME 不是图片、本体为空或超限都按未命中处理，
+    宁可重新下载也不把坏数据回给浏览器。
+    """
+    body_path, meta_path = _bg_cache_paths(url)
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        mime = str(meta.get("mime") or "")
+        if not mime.startswith("image/"):
+            return None
+        with open(body_path, "rb") as f:
+            body = f.read()
+    except (OSError, ValueError):
+        return None
+    if not body or len(body) > _BG_MAX_BYTES:
+        return None
+    return body, mime
+
+
+def _bg_cache_write(url: str, body: bytes, mime: str) -> None:
+    """写缓存（图片本体 + ``.json`` 元数据），失败只告警、不影响响应。
+
+    写临时文件再 ``os.replace``，避免并发请求读到写了一半的文件；任何
+    ``OSError``（目录不可写、磁盘满等）都退化为"本次不缓存"。
+    """
+    body_path, meta_path = _bg_cache_paths(url)
+    suffix = f".{os.getpid()}.{time.time_ns()}.tmp"
+    tmp_body = body_path + suffix
+    tmp_meta = meta_path + suffix
+    try:
+        os.makedirs(os.path.dirname(body_path), exist_ok=True)
+        with open(tmp_body, "wb") as f:
+            f.write(body)
+        with open(tmp_meta, "w", encoding="utf-8") as f:
+            json.dump({"url": url, "mime": mime, "ts": time.time()}, f)
+        os.replace(tmp_body, body_path)
+        os.replace(tmp_meta, meta_path)
+    except OSError as e:
+        logger.warning(f"bg cache write failed ({url}): {e}")
+        for tmp in (tmp_body, tmp_meta):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+async def _bg_get_image(url: str, refresh: bool = False) -> tuple[bytes, str, bool]:
+    """取背景图：优先磁盘缓存，未命中/强制刷新则下载并回写缓存。
+
+    Args:
+        url: 图片 URL。
+        refresh: ``True`` 时跳过读缓存，强制重新下载并覆盖旧缓存。
+
+    Returns:
+        ``(body, mime, from_cache)`` 三元组。
+    """
+    if not refresh:
+        cached = _bg_cache_read(url)
+        if cached is not None:
+            return cached[0], cached[1], True
+    body, mime = await _bg_download(url)
+    _bg_cache_write(url, body, mime)
+    return body, mime, False
+
+
+def _bg_make_response(
+    status: int, headers: Headers, body: bytes, legacy: bool
+) -> Response | tuple[int, Headers, bytes]:
+    """按 websockets 代际组装响应：legacy 三元组 / asyncio Response。"""
+    if legacy:
+        # legacy 消费方执行 AbortHandshake(*resp)，要求三元组
+        return (status, headers, body)
+    return Response(status, _BG_REASON.get(status, "OK"), headers, body)
+
+
+def _bg_error_response(
+    status: int, message: str, legacy: bool
+) -> Response | tuple[int, Headers, bytes]:
+    """组装简短的 text/plain 错误响应（不缓存）。"""
+    headers = Headers()
+    headers["Content-Type"] = "text/plain; charset=utf-8"
+    headers["Cache-Control"] = "no-store"
+    body = (message + "\n").encode("utf-8")
+    return _bg_make_response(status, headers, body, legacy)
+
+
+async def _bg_http_response(
+    path: str, legacy: bool
+) -> Response | tuple[int, Headers, bytes]:
+    """处理 ``GET /api/bg?url=<urlencoded>&refresh=1``。
+
+    成功：200 + 图片 Content-Type + ``Cache-Control`` + ``X-Bg-Cache: hit|miss``；
+    缺 url/非法 scheme → 400；内网目标 → 403；下载失败/非图片/超限 → 502。
+
+    Args:
+        path: 含 query string 的原始请求路径。
+        legacy: 是否 legacy websockets（决定返回三元组还是 Response）。
+    """
+    query = parse_qs(path.split("?", 1)[1]) if "?" in path else {}
+    url = (query.get("url") or [""])[0].strip()
+    refresh_raw = (query.get("refresh") or [""])[0].strip().lower()
+    refresh = refresh_raw in ("1", "true", "yes", "on")
+    if not url:
+        return _bg_error_response(400, "missing url", legacy)
+    try:
+        body, mime, from_cache = await _bg_get_image(url, refresh=refresh)
+    except _BgError as e:
+        logger.info(f"bg proxy {e.status} ({e.message}): {url}")
+        return _bg_error_response(e.status, e.message, legacy)
+    except Exception as e:  # 兜底：代理异常不应把 HTTP 层打崩
+        logger.warning(f"bg proxy unexpected error: {e}")
+        return _bg_error_response(502, "background image fetch failed", legacy)
+    headers = Headers()
+    headers["Content-Type"] = mime
+    headers["Content-Length"] = str(len(body))
+    headers["Cache-Control"] = _BG_CACHE_CONTROL
+    headers["X-Bg-Cache"] = "hit" if from_cache else "miss"
+    logger.info(f"bg proxy 200 ({'hit' if from_cache else 'miss'}): {url}")
+    return _bg_make_response(200, headers, body, legacy)
+
+
+async def _http_request_handler(
+    connection: Any, request: Any
+) -> Response | tuple[int, Headers, bytes] | None:
+    """处理普通 HTTP 请求：Web 终端页面、背景图代理，其余交给 WebSocket 升级。
 
     兼容两代 websockets API（``process_request`` 的参数形状不同）：
 
@@ -120,13 +508,16 @@ async def _http_request_handler(connection: Any, request: Any) -> Response | Non
         request_headers = request
     else:
         request_headers = request.headers
-    if _INDEX_HTML is None:
-        return None
     # 只拦截非 WebSocket 的 HTTP GET 请求
     if request_headers.get("Upgrade", "").lower() == "websocket":
         return None
     # path 可能包含 query string（如 /wstunnel?token=xxx），需去掉
     clean_path = path.split("?")[0]
+    # 背景图代理：不依赖内嵌页面是否加载成功，故放在 _INDEX_HTML 判断之前
+    if clean_path == "/api/bg":
+        return await _bg_http_response(path, legacy)
+    if _INDEX_HTML is None:
+        return None
     if clean_path in ("/", "/index.html", "/wstunnel", "/wsstunnel"):
         headers = Headers()
         headers["Content-Type"] = "text/html; charset=utf-8"

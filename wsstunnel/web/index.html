@@ -8,7 +8,10 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: #1a1a2e; overflow: hidden; touch-action: manipulation; }
-  #terminal { width: 100vw; height: 100vh; padding: 8px; }
+  #terminal {
+    width: 100vw; height: 100vh; padding: 8px;
+    position: relative; z-index: 1;
+  }
   /* 移动端：手势交给 JS 统一处理，避免浏览器抢占后 touchmove 被 cancel。
      必须直接覆盖 .xterm-viewport / .xterm-screen：iOS Safari 与微信 WebView
      不会沿祖先链传播 touch-action，可滚动的 viewport 会抢走手势做原生滚动，
@@ -18,7 +21,8 @@
   #terminal .xterm-viewport,
   #terminal .xterm-screen { touch-action: none; }
   #terminal .xterm { height: 100%; }
-  #terminal .xterm-viewport { height: 100% !important; }
+  /* viewport 默认是黑底（xterm.css），会让背景图完全被挡住 */
+  #terminal .xterm-viewport { height: 100% !important; background-color: transparent !important; }
   #top-bar {
     position: fixed; top: 0; right: 0;
     display: flex; align-items: center; gap: 6px;
@@ -32,11 +36,17 @@
   }
   #status.connected { background: #2ecc71; }
   #version { font: 11px monospace; color: #5a6a85; }
+  #menu-panel .menu-foot {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px 4px; color: #66708a; font-size: 11px;
+  }
+  #menu-panel .menu-foot #version { color: #7f8ba1; }
 
   #connect-form {
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     height: 100vh; gap: 16px;
+    position: relative; z-index: 1;
     font-family: system-ui, sans-serif;
     color: #ccc;
   }
@@ -52,25 +62,7 @@
   #connect-form button:hover { background: #1a4a8a; }
   .hidden { display: none !important; }
   #error { color: #e74c3c; font-size: 14px; }
-  #clear-btn {
-    position: fixed; bottom: 10px; right: 10px;
-    background: #333; color: #999; border: none;
-    border-radius: 4px; padding: 4px 10px;
-    font: 12px system-ui, sans-serif;
-    cursor: pointer; z-index: 20;
-    opacity: 0.5; transition: opacity 0.2s;
-  }
-  #clear-btn:hover { opacity: 1; color: #fff; }
-
   /* ── 文件传输 ── */
-  #file-btn {
-    font: 12px monospace;
-    background: #0f3460; color: #aaa;
-    border: 1px solid #0f3460; border-radius: 4px;
-    padding: 4px 8px; cursor: pointer;
-  }
-  #file-btn:hover { color: #fff; }
-  #file-btn.dl { background: #2c3e50; }
   #file-info {
     position: fixed; bottom: 40px; right: 10px;
     background: #1a1a2e; color: #ccc;
@@ -177,14 +169,6 @@
   #fab-panel .label { color: #888; font-size: 10px; padding: 6px 2px; }
 
   /* ── 集群面板 ── */
-  #cluster-btn {
-    font: 12px monospace;
-    background: #0f3460; color: #aaa;
-    border: 1px solid #0f3460; border-radius: 4px;
-    padding: 4px 8px; cursor: pointer;
-  }
-  #cluster-btn:hover { color: #fff; }
-  #cluster-btn.active { background: #1a4a8a; color: #fff; }
   #cluster-panel {
     position: fixed; top: 0; right: 0;
     width: 380px; height: 100vh;
@@ -251,15 +235,157 @@
   }
   .cluster-row button:hover { background: #1a4a8a; }
   .cluster-row select { cursor: pointer; }
+
+  /* ── 顶栏 ☰ 菜单 ──────────────────────────────────────────
+     上传、集群、背景、清除都是低频操作，收进菜单里：
+     顶栏只留状态 + 版本 + ☰，不挤占终端宽度。 */
+  #menu-btn {
+    font: 15px/1 system-ui, sans-serif;
+    background: #0f3460; color: #ddd;
+    border: 1px solid #0f3460; border-radius: 6px;
+    padding: 5px 10px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #menu-btn:hover, #menu-btn.active { background: #1a4a8a; color: #fff; }
+  #menu-panel {
+    position: fixed; top: 40px; right: 8px;
+    min-width: 196px;
+    background: rgba(22, 33, 62, 0.98);
+    border: 1px solid #333; border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    padding: 6px; z-index: 45;
+    display: flex; flex-direction: column; gap: 2px;
+    backdrop-filter: blur(8px);
+  }
+  #menu-panel button {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 10px 12px; min-height: 40px;
+    background: transparent; color: #ccc;
+    border: none; border-radius: 7px;
+    font: 13px system-ui, sans-serif;
+    text-align: left; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #menu-panel button:hover, #menu-panel button:active {
+    background: #1a4a8a; color: #fff;
+  }
+  #menu-panel button.danger { color: #e8a0a0; }
+  #menu-panel button.danger:hover, #menu-panel button.danger:active {
+    background: #5a2c3a; color: #fff;
+  }
+  #menu-panel .menu-sep { height: 1px; background: #2a3450; margin: 4px 2px; }
+  #menu-panel .menu-hint {
+    padding: 4px 12px 2px; color: #66708a;
+    font-size: 10px; letter-spacing: 0.5px;
+  }
+
+  /* ── 集群按钮（常用，常驻顶栏）── */
+  #cluster-btn {
+    font: 12px monospace;
+    background: #0f3460; color: #aaa;
+    border: 1px solid #0f3460; border-radius: 4px;
+    padding: 4px 8px; cursor: pointer;
+  }
+  #cluster-btn:hover { color: #fff; }
+  #cluster-btn.active { background: #1a4a8a; color: #fff; }
+
+  /* ── 背景图（v1.0.15）────────────────────────────────────────
+     独立的一层 fixed 背景：xterm 开启 allowTransparency 后 canvas
+     透明，图片才能从终端后面透出来。模糊/亮度用 CSS filter 实现；
+     inset 取负值，模糊后边缘不会露出 body 底色。 */
+  #bg-layer {
+    position: fixed; inset: -28px;
+    z-index: 0; display: none;
+    background-position: center center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    filter: blur(0px) brightness(100%);
+    pointer-events: none;
+    transition: filter 0.12s linear;
+  }
+  #bg-layer.on { display: block; }
+
+  /* 背景设置面板：右侧抽屉，移动端最多占 92vw */
+  #bg-panel {
+    position: fixed; top: 0; right: 0;
+    width: 360px; max-width: 92vw; height: 100vh;
+    background: rgba(22, 33, 62, 0.98);
+    border-left: 1px solid #333;
+    box-shadow: -6px 0 24px rgba(0, 0, 0, 0.55);
+    z-index: 35; display: flex; flex-direction: column;
+    font: 13px/1.5 system-ui, sans-serif; color: #ccc;
+  }
+  #bg-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; border-bottom: 1px solid #333;
+    font-weight: bold; color: #fff;
+  }
+  #bg-close {
+    background: none; border: none; color: #666; font-size: 16px;
+    cursor: pointer; padding: 2px 6px;
+  }
+  #bg-close:hover { color: #fff; }
+  #bg-body {
+    flex: 1; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .bg-field { display: flex; flex-direction: column; gap: 6px; }
+  .bg-field > .bg-label { color: #8892a6; font-size: 11px; letter-spacing: 0.5px; }
+  .bg-inline { display: flex; gap: 8px; align-items: center; }
+  #bg-url {
+    flex: 1; min-width: 0; padding: 8px 10px;
+    background: #16213e; color: #eee;
+    border: 1px solid #333; border-radius: 6px;
+    font: 12px Menlo, Monaco, monospace; outline: none;
+  }
+  #bg-url:focus { border-color: #0f3460; }
+  #bg-url-apply, #bg-pick, #bg-clear, #bg-refresh {
+    padding: 8px 12px; border: none; border-radius: 6px;
+    background: #0f3460; color: #eee; cursor: pointer;
+    font-size: 12px; white-space: nowrap;
+  }
+  #bg-url-apply:hover, #bg-pick:hover, #bg-refresh:hover { background: #1a4a8a; }
+  #bg-clear { background: #3a2430; color: #e8a0a0; }
+  #bg-clear:hover { background: #5a2c3a; }
+  #bg-refresh:disabled { opacity: 0.4; cursor: default; background: #0f3460; }
+  #bg-toggle-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; background: #16213e;
+    border: 1px solid #333; border-radius: 8px;
+  }
+  #bg-enable { width: 20px; height: 20px; accent-color: #2ecc71; cursor: pointer; }
+  #bg-blur, #bg-bright { width: 100%; accent-color: #4a7fd4; }
+  .bg-val { color: #fff; font: 12px Menlo, Monaco, monospace; }
+  #bg-preview {
+    width: 100%; height: 130px; border-radius: 8px;
+    border: 1px dashed #3a4661; background: #101828 center/cover no-repeat;
+  }
+  #bg-status { font-size: 11px; color: #7f8ba1; min-height: 15px; word-break: break-all; }
+  #bg-hint { font-size: 11px; color: #66708a; line-height: 1.45; }
 </style>
 </head>
 <body>
 
+<!-- 背景图层：fixed，z-index 低于终端；xterm canvas 透明后图片透出 -->
+<div id="bg-layer" aria-hidden="true"></div>
+
 <div id="top-bar">
   <span id="status">Disconnected</span>
-  <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.14</span>
-  <button id="cluster-btn" class="hidden">📊 集群</button>
-  <button id="file-btn" class="hidden">📁 上传</button>
+  <button id="cluster-btn" class="hidden" title="集群仪表板">📊 集群</button>
+  <button id="menu-btn" title="菜单" aria-haspopup="true" aria-expanded="false">☰</button>
+</div>
+
+<!-- 顶栏菜单：上传/背景/清除/版本这些低频信息收进来，不挤占终端宽度 -->
+<div id="menu-panel" class="hidden" role="menu">
+  <button id="file-btn" class="hidden" role="menuitem">📁 上传文件</button>
+  <button id="bg-btn" role="menuitem">🖼 背景设置</button>
+  <div class="menu-sep"></div>
+  <button id="clear-btn" class="danger" role="menuitem">🧹 清除连接配置</button>
+  <div class="menu-sep"></div>
+  <div class="menu-foot">
+    <span>版本</span>
+    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.15</span>
+  </div>
 </div>
 
 <!-- 连接表单 -->
@@ -306,6 +432,56 @@
         <button id="cluster-single-btn">发送</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- 背景设置面板 -->
+<div id="bg-panel" class="hidden">
+  <div id="bg-header">
+    <span>🖼 背景设置</span>
+    <button id="bg-close" title="关闭">✕</button>
+  </div>
+  <div id="bg-body">
+    <div id="bg-toggle-row">
+      <span>启用背景图</span>
+      <input type="checkbox" id="bg-enable" />
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">本地图片</span>
+      <div class="bg-inline">
+        <button id="bg-pick">选择本地图片</button>
+        <button id="bg-refresh" title="重新从 URL 下载并覆盖缓存" disabled>↻ 重新拉取</button>
+        <button id="bg-clear">清除</button>
+      </div>
+      <input type="file" id="bg-file" accept="image/*" style="display:none" />
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">网页图片 URL</span>
+      <div class="bg-inline">
+        <input id="bg-url" type="url" placeholder="https://example.com/bg.jpg" />
+        <button id="bg-url-apply">应用</button>
+      </div>
+      <div id="bg-hint">URL 图片首次加载后会缓存到本机：之后刷新页面、断线重连都不再联网拉取。跨域图片由 relay 代下载并落盘缓存。</div>
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">模糊度 <span class="bg-val" id="bg-blur-val">0px</span></span>
+      <input type="range" id="bg-blur" min="0" max="30" step="1" value="0" />
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">亮度 <span class="bg-val" id="bg-bright-val">100%</span></span>
+      <input type="range" id="bg-bright" min="20" max="150" step="5" value="100" />
+    </div>
+
+    <div class="bg-field">
+      <span class="bg-label">预览</span>
+      <div id="bg-preview"></div>
+    </div>
+
+    <div id="bg-status">未设置背景</div>
   </div>
 </div>
 
@@ -364,9 +540,6 @@
 <!-- 隐藏的文件选择器 -->
 <input type="file" id="file-input" style="display:none" />
 
-<!-- 清除存储按钮 -->
-<button id="clear-btn">清除</button>
-
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 
 <script>
@@ -420,6 +593,465 @@ function mobileSend(text) {
   ws.send(new TextEncoder().encode(text));
 }
 
+// ──────────────────────────────────────────────
+//  顶栏 ☰ 菜单：上传、背景、清除、版本号都是低频信息，
+//  统一收进菜单，把宽度留给终端内容；集群是高频操作，留在顶栏。
+// ──────────────────────────────────────────────
+function menuPanelEl() { return document.getElementById('menu-panel'); }
+
+function menuOpen(open) {
+  const panel = menuPanelEl();
+  const btn = document.getElementById('menu-btn');
+  if (!panel) return;
+  const willOpen = typeof open === 'boolean' ? open : panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !willOpen);
+  if (btn) {
+    btn.classList.toggle('active', willOpen);
+    btn.setAttribute('aria-expanded', String(willOpen));
+  }
+}
+
+function menuClose() { menuOpen(false); }
+
+(function bindMenuUI() {
+  const btn = document.getElementById('menu-btn');
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); menuOpen(); });
+
+  // 点菜单外收起
+  document.addEventListener('click', (e) => {
+    const panel = menuPanelEl();
+    const b = document.getElementById('menu-btn');
+    if (!panel || panel.classList.contains('hidden')) return;
+    if (panel.contains(e.target) || (b && b.contains(e.target))) return;
+    menuClose();
+  });
+
+  // Esc 收起
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') menuClose();
+  });
+})();
+
+// ──────────────────────────────────────────────
+//  背景图配置（v1.0.15）
+//  · 来源：本地文件 / 网页 URL
+//  · 缓存：图片二进制存 IndexedDB —— URL 图首次拉取后，刷新页面/断线重连
+//    都不再联网（"下次不用重新拉"）
+//  · 跨域：浏览器 fetch 被 CORS 挡住时，改走 relay 的 /api/bg（服务端还有
+//    磁盘缓存，见 relay.py）
+//  · 模糊度/亮度：CSS filter，配置量小存 localStorage
+// ──────────────────────────────────────────────
+const BG_DB_NAME = 'wsstunnel-bg';
+const BG_DB_STORE = 'assets';
+const BG_DB_KEY = 'current';
+const BG_PREFS_KEY = 'wsstunnel_bg_prefs';
+const BG_MAX_BYTES = 20 * 1024 * 1024;   // 单张图上限 20MB
+
+const bgState = {
+  enabled: false, blur: 0, bright: 100,
+  hasImage: false, kind: null, url: '', name: '', cached: false,
+};
+
+// 终端主题：背景图启用时把 background 换成透明，canvas 才会透出 #bg-layer
+const TERM_THEME = {
+  background: '#1a1a2e',
+  foreground: '#e0e0e0',
+  cursor: '#ffffff',
+  selectionBackground: '#334466',
+  black: '#282a36',
+  red: '#ff5555',
+  green: '#50fa7b',
+  yellow: '#f1fa8c',
+  blue: '#6272a4',
+  magenta: '#ff79c6',
+  cyan: '#8be9fd',
+  white: '#f8f8f2',
+};
+
+let _bgObjUrl = null;        // 当前 objectURL，换图时必须 revoke，否则内存泄漏
+let _bgDbPromise = null;
+
+function bgEl(id) { return document.getElementById(id); }
+
+function bgStatus(msg) {
+  const el = bgEl('bg-status');
+  if (el) el.textContent = msg;
+}
+
+// ── 偏好（开关/模糊/亮度）──
+function bgPrefsLoad() {
+  const defaults = { enabled: false, blur: 0, bright: 100 };
+  try {
+    const raw = localStorage.getItem(BG_PREFS_KEY);
+    if (!raw) return defaults;
+    const v = JSON.parse(raw) || {};
+    return {
+      enabled: !!v.enabled,
+      blur: Math.min(30, Math.max(0, Number(v.blur) || 0)),
+      bright: Math.min(150, Math.max(20, Number(v.bright) || 100)),
+    };
+  } catch (e) { return defaults; }
+}
+
+function bgPrefsSave() {
+  try {
+    localStorage.setItem(BG_PREFS_KEY, JSON.stringify({
+      enabled: bgState.enabled, blur: bgState.blur, bright: bgState.bright,
+    }));
+  } catch (e) {}
+}
+
+// 拖动滑块时每帧都写 localStorage 太浪费，防抖 200ms
+let _bgPrefsTimer = null;
+function bgPrefsSaveSoon() {
+  clearTimeout(_bgPrefsTimer);
+  _bgPrefsTimer = setTimeout(bgPrefsSave, 200);
+}
+
+// ── IndexedDB：图片 Blob 存这里（localStorage 存不下大图）──
+function bgDB() {
+  if (_bgDbPromise) return _bgDbPromise;
+  if (!window.indexedDB) return Promise.reject(new Error('IndexedDB 不可用'));
+  _bgDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(BG_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(BG_DB_STORE)) db.createObjectStore(BG_DB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('IndexedDB 打开失败'));
+    req.onblocked = () => reject(new Error('IndexedDB 被占用'));
+  }).catch((e) => { _bgDbPromise = null; throw e; });
+  return _bgDbPromise;
+}
+
+function bgIdbGet(key) {
+  return bgDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(BG_DB_STORE, 'readonly');
+    const req = tx.objectStore(BG_DB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  })).catch(() => null);
+}
+
+function bgIdbPut(key, val) {
+  return bgDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(BG_DB_STORE, 'readwrite');
+    tx.objectStore(BG_DB_STORE).put(val, key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB 写入中止'));
+  })).catch(() => false);
+}
+
+function bgIdbDelete(key) {
+  return bgDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(BG_DB_STORE, 'readwrite');
+    tx.objectStore(BG_DB_STORE).delete(key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  })).catch(() => false);
+}
+
+// ── 画面应用 ──
+function bgApplyFilter() {
+  const layer = bgEl('bg-layer');
+  if (!layer) return;
+  layer.style.filter = `blur(${bgState.blur}px) brightness(${bgState.bright}%)`;
+}
+
+// URL 可能带引号/括号，用 JSON.stringify 生成安全的 CSS 字符串
+function bgCSSUrl(url) { return 'url(' + JSON.stringify(String(url)) + ')'; }
+
+function bgSetImage(src) {
+  const layer = bgEl('bg-layer');
+  const preview = bgEl('bg-preview');
+  let css = 'none';
+  if (src && src.blob) {
+    if (_bgObjUrl) { URL.revokeObjectURL(_bgObjUrl); _bgObjUrl = null; }
+    _bgObjUrl = URL.createObjectURL(src.blob);
+    css = bgCSSUrl(_bgObjUrl);
+  } else if (src && src.url) {
+    if (_bgObjUrl) { URL.revokeObjectURL(_bgObjUrl); _bgObjUrl = null; }
+    css = bgCSSUrl(src.url);
+  }
+  if (layer) layer.style.backgroundImage = css;
+  if (preview) preview.style.backgroundImage = css;
+}
+
+// 背景层是否显示 + 终端主题跟着切（透明才能看见图）
+function bgRefreshVisibility() {
+  const layer = bgEl('bg-layer');
+  const show = !!(bgState.enabled && bgState.hasImage);
+  if (layer) layer.classList.toggle('on', show);
+  bgApplyTerminalTheme(show);
+  const chk = bgEl('bg-enable');
+  if (chk) chk.checked = bgState.enabled;
+  const rf = bgEl('bg-refresh');
+  if (rf) rf.disabled = !(bgState.kind === 'url' && !!bgState.url);
+}
+
+function bgApplyTerminalTheme(transparent) {
+  if (!term) return;
+  try {
+    term.options.theme = Object.assign({}, TERM_THEME, {
+      background: transparent ? 'rgba(0,0,0,0)' : '#1a1a2e',
+    });
+  } catch (e) {}
+}
+
+function bgUpdateLabels() {
+  const blurVal = bgEl('bg-blur-val');
+  const brightVal = bgEl('bg-bright-val');
+  if (blurVal) blurVal.textContent = bgState.blur + 'px';
+  if (brightVal) brightVal.textContent = bgState.bright + '%';
+}
+
+function bgSyncControls() {
+  const blur = bgEl('bg-blur');
+  const bright = bgEl('bg-bright');
+  if (blur) blur.value = String(bgState.blur);
+  if (bright) bright.value = String(bgState.bright);
+  bgUpdateLabels();
+  bgRefreshVisibility();
+}
+
+function bgSetEnabled(on) {
+  bgState.enabled = !!on;
+  bgPrefsSave();
+  bgRefreshVisibility();
+}
+
+function bgTogglePanel(force) {
+  const panel = bgEl('bg-panel');
+  const btn = bgEl('bg-btn');
+  if (!panel) return;
+  const open = typeof force === 'boolean' ? force : panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !open);
+  if (btn) btn.classList.toggle('active', open);
+  if (open) bgSyncControls();
+}
+
+// ── 获取图片：先直连（快），CORS 挡住再走 relay 代理 ──
+async function bgFetchDirect(url) {
+  const resp = await fetch(url, {
+    mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer',
+  });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const blob = await resp.blob();
+  if (!blob || !blob.size) throw new Error('空响应');
+  if (blob.size > BG_MAX_BYTES) throw new Error('图片超过 20MB');
+  if (blob.type && !blob.type.startsWith('image/')) throw new Error('不是图片：' + blob.type);
+  return blob;
+}
+
+async function bgFetchViaRelay(url, refresh) {
+  const q = '/api/bg?url=' + encodeURIComponent(url) + (refresh ? '&refresh=1' : '');
+  const resp = await fetch(q, { cache: 'no-store' });
+  if (!resp.ok) throw new Error('代理 HTTP ' + resp.status);
+  const blob = await resp.blob();
+  if (!blob || !blob.size) throw new Error('空响应');
+  if (blob.size > BG_MAX_BYTES) throw new Error('图片超过 20MB');
+  if (blob.type && !blob.type.startsWith('image/')) throw new Error('不是图片：' + blob.type);
+  return blob;
+}
+
+async function bgApplyUrl(raw, opts) {
+  opts = opts || {};
+  const url = String(raw || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    bgStatus('请输入 http:// 或 https:// 开头的图片地址');
+    return;
+  }
+  const old = await bgIdbGet(BG_DB_KEY);
+  // 同一 URL 已有缓存：直接用，不联网 —— 这就是"下次不用重新拉"
+  if (!opts.force && old && old.kind === 'url' && old.url === url && old.blob) {
+    bgState.kind = 'url'; bgState.url = url; bgState.hasImage = true;
+    bgState.cached = true; bgState.name = '';
+    bgSetImage({ blob: old.blob });
+    bgSetEnabled(true);
+    bgStatus('命中本地缓存，直接使用（未联网拉取）');
+    return;
+  }
+
+  bgStatus('正在获取图片…');
+  let blob = null;
+  let via = '';
+  try { blob = await bgFetchDirect(url); via = 'direct'; } catch (e) { /* CORS/网络失败 → 代理 */ }
+  if (!blob) {
+    try { blob = await bgFetchViaRelay(url, !!opts.force); via = 'relay'; } catch (e) { /* 代理也不可用 */ }
+  }
+
+  if (blob) {
+    const stored = await bgIdbPut(BG_DB_KEY, {
+      v: 1, kind: 'url', url, name: '', mime: blob.type || '', blob, ts: Date.now(),
+    });
+    bgState.kind = 'url'; bgState.url = url; bgState.hasImage = true;
+    bgState.cached = stored !== false; bgState.name = '';
+    bgSetImage({ blob });
+    bgSetEnabled(true);
+    bgStatus(stored === false
+      ? '已应用（本地缓存写入失败，下次可能重新下载）'
+      : (via === 'relay' ? '已通过 relay 下载并缓存，下次直接本地读取' : '已下载并缓存，下次直接本地读取'));
+    return;
+  }
+
+  // 两条路都不通：退回外链直接显示。图能看见，但刷新后仍会走网络。
+  bgState.kind = 'url'; bgState.url = url; bgState.hasImage = true;
+  bgState.cached = false; bgState.name = '';
+  bgSetImage({ url });
+  bgSetEnabled(true);
+  bgStatus('无法缓存（跨域或网络错误），已直接外链显示；刷新后仍需联网');
+}
+
+async function bgApplyLocalFile(file) {
+  if (!file) return;
+  if (file.type && !file.type.startsWith('image/')) {
+    bgStatus('请选择图片文件（jpg/png/webp/gif）');
+    return;
+  }
+  if (file.size > BG_MAX_BYTES) { bgStatus('图片太大（上限 20MB）'); return; }
+  const stored = await bgIdbPut(BG_DB_KEY, {
+    v: 1, kind: 'file', name: file.name, url: '', mime: file.type || '', blob: file, ts: Date.now(),
+  });
+  bgState.kind = 'file'; bgState.url = ''; bgState.name = file.name;
+  bgState.hasImage = true; bgState.cached = stored !== false;
+  bgSetImage({ blob: file });
+  bgSetEnabled(true);
+  bgStatus(stored === false
+    ? `已应用 ${file.name}（缓存写入失败，刷新后需重选）`
+    : `已应用并缓存：${file.name}`);
+}
+
+async function bgClearAll() {
+  await bgIdbDelete(BG_DB_KEY);
+  if (_bgObjUrl) { URL.revokeObjectURL(_bgObjUrl); _bgObjUrl = null; }
+  bgState.enabled = false; bgState.hasImage = false;
+  bgState.kind = null; bgState.url = ''; bgState.name = ''; bgState.cached = false;
+  const layer = bgEl('bg-layer');
+  const preview = bgEl('bg-preview');
+  if (layer) layer.style.backgroundImage = 'none';
+  if (preview) preview.style.backgroundImage = 'none';
+  const urlInput = bgEl('bg-url');
+  if (urlInput) urlInput.value = '';
+  bgPrefsSave();
+  bgSyncControls();
+  bgStatus('背景已清除');
+}
+
+async function bgBoot() {
+  const prefs = bgPrefsLoad();
+  bgState.blur = prefs.blur;
+  bgState.bright = prefs.bright;
+  bgState.enabled = prefs.enabled;
+  bgApplyFilter();
+  bgSyncControls();
+
+  let rec = null;
+  try { rec = await bgIdbGet(BG_DB_KEY); } catch (e) {}
+  if (rec && rec.blob) {
+    bgState.hasImage = true;
+    bgState.kind = rec.kind || 'file';
+    bgState.url = rec.url || '';
+    bgState.name = rec.name || '';
+    bgState.cached = true;
+    bgSetImage({ blob: rec.blob });
+    if (rec.kind === 'url' && rec.url) {
+      const urlInput = bgEl('bg-url');
+      if (urlInput) urlInput.value = rec.url;
+    }
+    bgRefreshVisibility();
+    bgStatus(rec.kind === 'url'
+      ? '已从本地缓存恢复（未联网）'
+      : ('已恢复本地图片' + (rec.name ? '：' + rec.name : '')));
+  } else if (bgState.enabled) {
+    bgStatus('已启用背景，但还没有图片：请选择本地图片或粘贴 URL');
+  }
+}
+
+// ── 事件绑定 ──
+(function bindBgUI() {
+  const btn = bgEl('bg-btn');
+  if (btn) btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menuClose();
+    // 菜单项语义是"打开背景设置"，不做 toggle：
+    // 面板可能还开着（点 ☰ 时 stopPropagation 没让它关），toggle 会把它关掉。
+    bgTogglePanel(true);
+  });
+
+  const close = bgEl('bg-close');
+  if (close) close.addEventListener('click', () => bgTogglePanel(false));
+
+  const enable = bgEl('bg-enable');
+  if (enable) enable.addEventListener('change', () => {
+    if (enable.checked && !bgState.hasImage) {
+      bgStatus('还没有图片：请先选择本地图片或粘贴 URL');
+      enable.checked = false;
+      bgState.enabled = false;
+      bgPrefsSave();
+      return;
+    }
+    bgSetEnabled(enable.checked);
+  });
+
+  const pick = bgEl('bg-pick');
+  const fileInput = bgEl('bg-file');
+  if (pick && fileInput) pick.addEventListener('click', () => fileInput.click());
+  if (fileInput) fileInput.addEventListener('change', () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = '';             // 允许重复选择同一文件
+    bgApplyLocalFile(file);
+  });
+
+  const urlInput = bgEl('bg-url');
+  const urlApply = bgEl('bg-url-apply');
+  if (urlApply) urlApply.addEventListener('click', () => bgApplyUrl(urlInput && urlInput.value));
+  if (urlInput) urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); bgApplyUrl(urlInput.value); }
+  });
+
+  const refresh = bgEl('bg-refresh');
+  if (refresh) refresh.addEventListener('click', () => {
+    if (bgState.kind === 'url' && bgState.url) bgApplyUrl(bgState.url, { force: true });
+    else bgStatus('只有 URL 图片可以重新拉取');
+  });
+
+  const clear = bgEl('bg-clear');
+  if (clear) clear.addEventListener('click', () => bgClearAll());
+
+  const blur = bgEl('bg-blur');
+  if (blur) {
+    blur.addEventListener('input', () => {
+      bgState.blur = Number(blur.value);
+      bgApplyFilter();
+      bgUpdateLabels();
+      bgPrefsSaveSoon();
+    });
+    blur.addEventListener('change', bgPrefsSave);
+  }
+
+  const bright = bgEl('bg-bright');
+  if (bright) {
+    bright.addEventListener('input', () => {
+      bgState.bright = Number(bright.value);
+      bgApplyFilter();
+      bgUpdateLabels();
+      bgPrefsSaveSoon();
+    });
+    bright.addEventListener('change', bgPrefsSave);
+  }
+
+  // 面板外点击收起（与 fab 面板行为一致）
+  document.addEventListener('click', (e) => {
+    const panel = bgEl('bg-panel');
+    const b = bgEl('bg-btn');
+    if (!panel || panel.classList.contains('hidden')) return;
+    if (panel.contains(e.target) || (b && b.contains(e.target))) return;
+    bgTogglePanel(false);
+  });
+})();
+
 // --- localStorage 持久化 ---
 const STORAGE_SERVER = 'wsstunnel_server';
 const STORAGE_TOKEN = 'wsstunnel_token';
@@ -445,7 +1077,10 @@ function clearConfig() {
   if (ws) ws.close();
 }
 
-document.getElementById('clear-btn').addEventListener('click', clearConfig);
+document.getElementById('clear-btn').addEventListener('click', function() {
+  menuClose();
+  clearConfig();
+});
 
 // --- 读取默认值：URL 参数优先，否则从 localStorage ---
 const params = new URLSearchParams(window.location.search);
@@ -600,21 +1235,12 @@ function initTerminal() {
     fontSize: 14,
     // 显式给足回滚历史：默认值极小或被他处覆盖时，翻页键会"一动不动"
     scrollback: 5000,
+    // 背景图要靠 canvas 透明才能透出来；该选项只能构造时给，故常开
+    allowTransparency: true,
     fontFamily: 'Menlo, Monaco, "Fira Code", monospace',
-    theme: {
-      background: '#1a1a2e',
-      foreground: '#e0e0e0',
-      cursor: '#ffffff',
-      selectionBackground: '#334466',
-      black: '#282a36',
-      red: '#ff5555',
-      green: '#50fa7b',
-      yellow: '#f1fa8c',
-      blue: '#6272a4',
-      magenta: '#ff79c6',
-      cyan: '#8be9fd',
-      white: '#f8f8f2',
-    },
+    theme: Object.assign({}, TERM_THEME, {
+      background: (bgState.enabled && bgState.hasImage) ? 'rgba(0,0,0,0)' : TERM_THEME.background,
+    }),
   });
 
   term.open(document.getElementById('terminal'));
@@ -946,6 +1572,7 @@ function handleFileData(text) {
 
 // ── 文件上传 ──
 document.getElementById('file-btn').addEventListener('click', function() {
+  menuClose();
   document.getElementById('file-input').click();
 });
 
@@ -1261,15 +1888,14 @@ handleRelayText = function(text) {
 };
 
 document.getElementById('cluster-btn').addEventListener('click', function() {
+  menuClose();
   const p = document.getElementById('cluster-panel');
   const opening = p.classList.contains('hidden');
   p.classList.toggle('hidden');
-  this.classList.toggle('active');
   if (opening && ws && ws.readyState === WebSocket.OPEN) ws.send('LIST');
 });
 document.getElementById('cluster-close').addEventListener('click', function() {
   document.getElementById('cluster-panel').classList.add('hidden');
-  document.getElementById('cluster-btn').classList.remove('active');
 });
 
 // @all 批量执行
@@ -1322,6 +1948,9 @@ document.getElementById('server-url').addEventListener('keydown', (e) => {
 document.getElementById('token-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') connect();
 });
+
+// 背景图：恢复配置与已缓存的图片（异步，不阻塞自动连接）
+bgBoot().catch(() => {});
 </script>
 </body>
 </html>
