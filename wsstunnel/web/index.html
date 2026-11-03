@@ -274,6 +274,26 @@
     background: #5a2c3a; color: #fff;
   }
   #menu-panel .menu-sep { height: 1px; background: #2a3450; margin: 4px 2px; }
+  /* 清除配置的二次确认：破坏性操作，不能一点就执行 */
+  #menu-panel .menu-confirm {
+    margin: 4px 6px 6px; padding: 10px 12px;
+    background: rgba(90, 44, 58, 0.55);
+    border: 1px solid #6b3244; border-radius: 8px;
+    font-size: 11px; line-height: 1.5; color: #e8c0c8;
+  }
+  #menu-panel .menu-confirm .confirm-actions {
+    display: flex; gap: 8px; margin-top: 8px;
+  }
+  #menu-panel .menu-confirm button {
+    flex: 1; justify-content: center;
+    padding: 8px 0; min-height: 36px;
+    border: none; border-radius: 6px; cursor: pointer;
+    font: 12px system-ui, sans-serif;
+  }
+  #menu-panel #clear-cancel { background: #2a3450; color: #ccc; }
+  #menu-panel #clear-cancel:hover { background: #3a4661; color: #fff; }
+  #menu-panel #clear-ok { background: #8a3348; color: #fff; }
+  #menu-panel #clear-ok:hover { background: #a63d56; color: #fff; }
   #menu-panel .menu-hint {
     padding: 4px 12px 2px; color: #66708a;
     font-size: 10px; letter-spacing: 0.5px;
@@ -399,10 +419,17 @@
   <button id="bg-btn" role="menuitem">🖼 背景设置</button>
   <div class="menu-sep"></div>
   <button id="clear-btn" class="danger" role="menuitem">🧹 清除连接配置</button>
+  <div id="clear-confirm" class="menu-confirm hidden">
+    <div>清除后当前连接会断开，服务器地址和 token 也要重新输入。</div>
+    <div class="confirm-actions">
+      <button type="button" id="clear-cancel">取消</button>
+      <button type="button" id="clear-ok">确认清除</button>
+    </div>
+  </div>
   <div class="menu-sep"></div>
   <div class="menu-foot">
     <span>版本</span>
-    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.16</span>
+    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.17</span>
   </div>
 </div>
 
@@ -577,6 +604,8 @@
 let ws = null;
 let term = null;
 let backends = [];
+let _userCleared = false;   // 用户主动清除配置：断线后不自动重连、也不显示"重连中"
+
 let _mobileDup = '';
 let _mobileDupTimer = null;
 let _mobileBuf = '';
@@ -642,7 +671,16 @@ function menuOpen(open) {
   }
 }
 
-function menuClose() { menuOpen(false); }
+function menuClose() {
+  menuOpen(false);
+  clearConfirmShow(false);
+}
+
+// 清除配置的二次确认：默认收起，点「清除连接配置」才展开
+function clearConfirmShow(show) {
+  const box = document.getElementById('clear-confirm');
+  if (box) box.classList.toggle('hidden', !show);
+}
 
 (function bindMenuUI() {
   const btn = document.getElementById('menu-btn');
@@ -1135,6 +1173,8 @@ function saveConfig(server, token) {
 }
 
 function clearConfig() {
+  // 主动清除：标记一下，避免 onclose 又走自动重连把"重连中"闪出来
+  _userCleared = true;
   localStorage.removeItem(STORAGE_SERVER);
   localStorage.removeItem(STORAGE_TOKEN);
   document.getElementById('server-url').value = '';
@@ -1143,7 +1183,15 @@ function clearConfig() {
   if (ws) ws.close();
 }
 
+// 清除连接配置会断线并清空 server/token，菜单里很容易误触 —— 必须二次确认
 document.getElementById('clear-btn').addEventListener('click', function() {
+  clearConfirmShow(true);
+});
+document.getElementById('clear-cancel').addEventListener('click', function() {
+  clearConfirmShow(false);
+});
+document.getElementById('clear-ok').addEventListener('click', function() {
+  clearConfirmShow(false);
   menuClose();
   clearConfig();
 });
@@ -1178,6 +1226,7 @@ function showError(msg) {
 }
 
 function connect() {
+  _userCleared = false;   // 用户主动发起连接，恢复正常重连行为
   let url = document.getElementById('server-url').value.trim();
   const token = document.getElementById('token-input').value.trim();
 
@@ -1245,6 +1294,13 @@ function connect() {
     if (term) {
       term.dispose();
       term = null;
+    }
+
+    // 用户刚点了「确认清除」：配置已经清空，直接回表单，不要假装重连
+    if (_userCleared) {
+      _userCleared = false;
+      document.getElementById('connect-form').classList.remove('hidden');
+      return;
     }
 
     // 自动重连（指数退避，最大 30s）

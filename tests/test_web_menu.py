@@ -122,11 +122,12 @@ class TestMenuBehavior:
 
     def test_entries_close_menu_before_action(self, html):
         code = _code_lines(html)
-        # 菜单内的入口都应在动作前调用 menuClose()
-        assert code.count("menuClose();") >= 3, "上传/背景/清除应各自先收起菜单"
+        # 菜单内的常规入口都应在动作前调用 menuClose()；
+        # 清除配置例外 —— 它先展开二次确认，确认后才收菜单
+        assert code.count("menuClose();") >= 3, "上传/背景/确认清除应各自先收起菜单"
         for anchor in (
             "document.getElementById('file-btn').addEventListener",
-            "document.getElementById('clear-btn').addEventListener",
+            "document.getElementById('clear-ok')",
         ):
             i = code.index(anchor)
             seg = code[i:i + 400]
@@ -144,3 +145,63 @@ class TestMenuBehavior:
         code = _code_lines(html)
         i = code.index("document.getElementById('file-btn').addEventListener")
         assert "file-input').click()" in code[i:i + 300], "上传入口仍要触发文件选择"
+
+
+class TestClearConfirm:
+    """清除连接配置是破坏性操作，必须二次确认（v1.0.17）。"""
+
+    def test_confirm_block_exists_and_hidden(self, html):
+        m = re.search(r'<div id="clear-confirm"([^>]*)>', html)
+        assert m, "缺少清除确认块 #clear-confirm"
+        assert "hidden" in m.group(1), "确认块默认应收起"
+        assert 'id="clear-cancel"' in html, "缺少取消按钮"
+        assert 'id="clear-ok"' in html, "缺少确认按钮"
+
+    @staticmethod
+    def _handler_body(code: str, anchor: str) -> str:
+        """取某个 addEventListener 处理函数的函数体（到第一个 ``});``）。"""
+        i = code.index(anchor)
+        j = code.index("});", i)
+        return code[i:j]
+
+    def test_clear_btn_does_not_clear_directly(self, html):
+        code = _code_lines(html)
+        body = self._handler_body(code, "document.getElementById('clear-btn').addEventListener")
+        assert "clearConfig()" not in body, "点「清除连接配置」不能直接执行 clearConfig"
+        assert "clearConfirmShow(true)" in body, "应先展开二次确认"
+        assert "menuClose();" not in body, "展开确认时不要收起菜单，否则确认框看不到"
+
+    def test_confirm_executes_after_ok(self, html):
+        code = _code_lines(html)
+        body = self._handler_body(code, "document.getElementById('clear-ok')")
+        assert "clearConfig()" in body, "确认后才执行清除"
+        assert "menuClose();" in body
+
+    def test_cancel_only_closes_confirm(self, html):
+        code = _code_lines(html)
+        body = self._handler_body(code, "document.getElementById('clear-cancel')")
+        assert "clearConfirmShow(false)" in body
+        assert "clearConfig()" not in body, "取消不能触发清除"
+
+    def test_menu_close_resets_confirm(self, html):
+        code = _code_lines(html)
+        i = code.index("function menuClose()")
+        seg = code[i:i + 200]
+        assert "clearConfirmShow(false)" in seg, "收起菜单时要重置确认态，避免下次误点"
+
+    def test_confirm_explains_consequence(self, html):
+        m = re.search(r'<div id="clear-confirm"[^>]*>(.*?)</div>\s*<div class="menu-sep">', html, re.S)
+        assert m and ("断开" in m.group(1) or "重新输入" in m.group(1)), (
+            "确认文案要说明后果（断线 / 需重新输入地址和 token）"
+        )
+
+    def test_no_reconnect_after_clear(self, html):
+        """清除后不应再闪「重连中」：主动清除要直接回表单。"""
+        code = _code_lines(html)
+        i = code.index("function clearConfig()")
+        assert "_userCleared = true" in code[i:i + 400]
+        j = code.index("ws.onclose")
+        seg = code[j:j + 1200]
+        assert "if (_userCleared)" in seg, "onclose 要识别主动清除"
+        assert "connect-form" in seg
+        assert "_reconnectAttempt++" in seg, "正常的自动重连逻辑要保留"
