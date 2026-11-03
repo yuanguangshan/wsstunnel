@@ -119,6 +119,8 @@
     padding: 6px 6px; cursor: pointer; min-width: 38px;
     flex: 1; min-height: 48px; text-align: center; font-size: 14px;
   }
+  /* 一行 7 键（Esc/A/E/U/K/PgUp/PgDn）：窄屏靠缩小最小宽度兜住 */
+  #fab-panel .row.wide button { min-width: 30px; padding: 6px 3px; font-size: 12px; }
   #fab-panel button:active { background: #1a4a8a; color: #fff; }
   #fab-panel button.active { background: #e74c3c; color: #fff; border-color: #e74c3c; }
   #fab-panel .label { color: #888; font-size: 10px; padding: 6px 2px; }
@@ -258,13 +260,14 @@
 <!-- 移动端浮窗控制键 -->
 <div id="fab">⌨</div>
 <div id="fab-panel">
-  <div class="row">
+  <div class="row wide">
     <button data-key="escape">Esc</button>
     <button data-key="a">A↰</button>
     <button data-key="e">E↱</button>
     <button data-key="u">U</button>
     <button data-key="k">K</button>
-    <button data-key="w">W</button>
+    <button data-key="page-up" title="向上翻页（PgUp）">PgUp</button>
+    <button data-key="page-down" title="向下翻页（PgDn）">PgDn</button>
   </div>
   <div class="row">
     <button data-key="tab">Tab</button>
@@ -857,6 +860,16 @@ function fabSend(key) {
     const cmd = 'npm i -g reasonix code && reasonix setup\r';
     ws.send(new TextEncoder().encode(cmd));
     return;
+  }
+  else if (key === 'page-up' || key === 'page-down') {
+    // 翻页分两种场景，别一律把 ESC[5~/ESC[6~ 丢给远端：
+    // - 备屏（less/vim/top/tmux 等全屏程序）：翻页由远端程序负责，发按键；
+    // - 正常缓冲（裸 bash 提示符）：发过去也没人理，翻本地回滚历史才有用。
+    if (term && term.buffer.active.type !== 'alternate') {
+      term.scrollPages(key === 'page-up' ? -1 : 1);
+      return;
+    }
+    bytes = key === 'page-up' ? [0x1b, 0x5b, 0x35, 0x7e] : [0x1b, 0x5b, 0x36, 0x7e];
   }
   else if (key === 'arrow-up') bytes = [0x1b, 0x5b, 0x41];
   else if (key === 'arrow-down') bytes = [0x1b, 0x5b, 0x42];
