@@ -495,7 +495,7 @@
   <div class="menu-sep"></div>
   <div class="menu-foot">
     <span>版本</span>
-    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.23</span>
+    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.24</span>
   </div>
 </div>
 
@@ -534,6 +534,10 @@
       <div class="cluster-row">
         <select id="cluster-current-select"><option>—</option></select>
       </div>
+      <p style="margin:6px 0 0;font-size:11.5px;line-height:1.55;color:#7d8590">
+        切后端请用这个下拉框。<b>在终端里直接敲 <code>USE xxx</code> 不会生效</b> ——
+        终端按键走二进制帧，中继只把文本帧当命令解析；这里和下面的「单独发送」发的都是文本帧。
+      </p>
     </div>
     <div class="cluster-section">
       <h4>单独发送</h4>
