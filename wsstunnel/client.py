@@ -171,6 +171,23 @@ _SIGNAL_MAP: dict[str, signal.Signals] = {
 }
 
 
+def _notify_winsize(shell_proc: subprocess.Popen) -> None:
+    """TIOCSWINSZ 之后补一发 SIGWINCH。
+
+    内核只会把 SIGWINCH 发给该终端的「前台进程组」。这里的 shell 是
+    ``setsid()`` 起的独立会话、PTY 上并没有设置前台组，所以信号没人收 ——
+    裸 bash 无所谓（重绘提示符时会重新 ioctl 取尺寸），但 tmux / vim 这类
+    靠信号感知尺寸的全屏程序会一直按旧尺寸绘制，表现为大段空白、错行。
+
+    Args:
+        shell_proc: shell 子进程（信号发给它的整个进程组）。
+    """
+    try:
+        os.killpg(shell_proc.pid, signal.SIGWINCH)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def _send_signal(shell_proc: subprocess.Popen, sig_name: str) -> None:
     """向进程组发送信号。
 
@@ -561,7 +578,10 @@ def _run_pty_mode(
         try:
             cols, rows = os.get_terminal_size()
         except OSError:
-            rows, cols = 50, 200
+            # --daemon 下没有终端可取尺寸。用 80x24 这个保守默认值：
+            # 之前的 50x200 会让 tmux 按 200 列绘制，手机上一片空白错行。
+            # 前端连上后会立刻发 __RESIZE 校正。
+            rows, cols = 24, 80
         _set_winsize(master_fd, rows, cols)
         shell_proc = subprocess.Popen(
             [shell, "-i"],
@@ -661,6 +681,7 @@ def _run_pty_mode(
                             _, dims = msg.split(":", 1)
                             r, c = map(int, dims.split(","))
                             _set_winsize(master_fd, r, c)
+                            _notify_winsize(shell_proc)
                         except (ValueError, OSError) as e:
                             logger.debug(f"Resize failed: {e}")
                         continue

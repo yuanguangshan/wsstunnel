@@ -243,3 +243,83 @@ class TestPipeModeBinaryInput:
 
         assert written, "命令没有被写进 shell"
         assert written[0] == b"echo hi\r\n"
+
+
+# ──────────────────────────────────────────────
+#  resize 通知（v1.0.22）
+# ──────────────────────────────────────────────
+
+class TestNotifyWinsize:
+    """TIOCSWINSZ 之后必须补 SIGWINCH，否则 tmux 收不到。"""
+
+    def test_sends_sigwinch_to_process_group(self, monkeypatch):
+        from wsstunnel import client as client_mod
+
+        calls = []
+
+        class _Proc:
+            pid = 4242
+
+        monkeypatch.setattr(client_mod.os, "killpg",
+                            lambda pid, sig: calls.append((pid, sig)))
+        client_mod._notify_winsize(_Proc())
+
+        assert calls == [(4242, signal.SIGWINCH)]
+
+    def test_swallows_missing_process(self, monkeypatch):
+        from wsstunnel import client as client_mod
+
+        class _Proc:
+            pid = 4242
+
+        def _boom(pid, sig):
+            raise ProcessLookupError()
+
+        monkeypatch.setattr(client_mod.os, "killpg", _boom)
+        client_mod._notify_winsize(_Proc())   # 不应抛异常
+
+    def test_resize_message_triggers_signal(self, monkeypatch):
+        """真正走一遍 __RESIZE 分支，确认 set_winsize 与 SIGWINCH 都发生。"""
+        import threading
+
+        import websocket
+
+        from wsstunnel import client as client_mod
+
+        resized = []
+        signalled = []
+
+        class _Proc:
+            pid = 4242
+
+            def wait(self, timeout=None):
+                return 0
+
+        class _WS:
+            def __init__(self):
+                self.calls = 0
+
+            def recv(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return "__RESIZE:30,100"
+                raise websocket.WebSocketConnectionClosedException()
+
+            def send_binary(self, data):
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(client_mod.subprocess, "Popen", lambda *a, **k: _Proc())
+        monkeypatch.setattr(client_mod, "_terminate_process", lambda *a, **k: None)
+        monkeypatch.setattr(client_mod, "_set_winsize",
+                            lambda fd, r, c: resized.append((r, c)))
+        monkeypatch.setattr(client_mod.os, "killpg",
+                            lambda pid, sig: signalled.append((pid, sig)))
+
+        client_mod._run_pty_mode(_WS(), "/bin/sh", threading.Event())
+
+        # 第一次是 spawn 时的初始尺寸，第二次才是 __RESIZE
+        assert (30, 100) in resized, resized
+        assert (4242, signal.SIGWINCH) in signalled, signalled
