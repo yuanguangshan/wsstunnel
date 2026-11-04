@@ -622,6 +622,14 @@ SELECT 1
 @web-server nginx -t
 ```
 
+### 输出隔离
+
+每个前端只接收**自己当前选中后端**的输出（1.0.23 起）。多后端同时在线时，
+不会再出现"别的机器的提示符 / tmux 状态栏混进我的终端"。
+
+代价：`@<name> <cmd>` 的命令会照常执行，但**输出不会显示**给你（输出按当前选择
+过滤）。要看结果就先 `USE <name>` 切过去。
+
 ### PTY 模式
 
 默认使用 PTY（伪终端）模式，支持 `vim`、`top`、`htop` 等 TUI 程序。如需回退到传统管道模式（行缓冲），使用 `--no-pty`：
@@ -878,6 +886,7 @@ FileNotFoundError: /bin/bash
 | v1.0.11 | 主悬浮球常态透明度 0.32（按下/展开面板时 0.85），与 ▲/▼ 翻页键风格统一，不再遮挡终端内容 | 仅 Web 终端更新，后端无需升级 |
 | v1.0.12 | 翻页键可视尺寸 40→48px，**热区扩大到 88px 直径**（四周各多 20px）；新增 document 级 touchstart 坐标兜底，微信 X5 吞掉元素事件也能翻页 | 仅 Web 终端更新，后端无需升级 |
 | v1.0.13 | **翻页键真机失效的根因修复**：⌨ 主球此前被 `visualViewport` 顶到"可视区垂直中央"，键盘一弹可视区变矮，正好压在 ▲ 上（z-index 更高），点 ▲ 全被 ⌨ 吃掉。改为 ▲/⌨/▼ 同组 flex 竖排、整组随键盘上移，物理上不可能重叠；节流由全局 300ms 改为每键 180ms（连点不丢）；新增"已到顶部/底部"轻提示（翻不动也有反馈）；面板补回 PgUp/PgDn 冗余入口；xterm CDN 锁 5.3.0 + buffer API 兼容 4.x（未锁版本时 `term.buffer.active` 抛错会静默吞掉点击）；键盘开合重排时保留滚动位置；HTML 响应加 `Cache-Control: no-store` | **必须升级 relay 并强刷页面**（页面由 relay 内嵌分发） |
+| v1.0.23 | **多后端输出隔离**：二进制 PTY 帧原来广播给所有前端，多后端同时在线时每个终端都会混进别人的提示符、tmux 状态栏、全屏重绘（表现为「屏幕全是 `root ~ $`、光标跑到中间」）。现在只发给「当前 target 就是该后端」的前端；顺带把 `AUTH_OK` / `[Info] Switched to backend:` 这类协议控制文本从终端输出里剔除 | **需升级 relay**（client 与后端无变化） |
 | v1.0.22 | **tmux 等全屏程序的尺寸修复**：`__RESIZE` 之后只做了 `TIOCSWINSZ`，而内核只把 `SIGWINCH` 发给终端的「前台进程组」——这里是 `setsid()` 起的会话、没有前台组，于是 tmux / vim 收不到信号，一直按旧尺寸绘制（daemon 下默认 50×200，手机上表现为大段空白、错行）。现在 resize 后额外给 shell 的进程组补一发 `SIGWINCH`；顺带把无终端时的默认尺寸从 50×200 改成 24×80 | **需升级 client**（relay 与 Web 页面无变化） |
 | v1.0.21 | **`--daemon` 下的终端环境兜底**：`TERM` 为空或 `dumb` 时给子 shell 补 `xterm-256color`（此前 tmux / vim / htop 会报 `terminal does not support clear` 或花屏）；`--no-pty` 管道模式收到二进制帧不再因 `bytes.startswith(str)` 抛 `TypeError` 而整条连接重建（Web/CLI 前端发的都是二进制按键，该模式此前实际不可用）；新增 `examples/ws-bootstrap` 与 README 的 tmux 会话持久化章节 | **需升级 client**（relay 与 Web 页面无变化） |
 | v1.0.20 | **断线孤儿进程修复**：不再把 PTY master 传给 shell 子进程（移除 `pass_fds=(master_fd,)`）。此前父进程关闭 master 后 PTY 仍被子进程续命、永不产生 HUP/EIO，硬断线（client 被 kill / 网络中断）后 tmux 这类全屏前端会变成永久孤儿进程，随重连次数累积；顺带补一条回归测试 | **需升级 client**（relay 与 Web 页面无变化） |
