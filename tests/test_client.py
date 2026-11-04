@@ -154,3 +154,92 @@ class TestPtyChildFds:
             "PTY master 不能传给子进程：master 的副本会让 PTY 在父进程关闭后"
             "继续存活，断线时前台程序收不到 HUP，变成永久孤儿进程"
         )
+
+
+# ──────────────────────────────────────────────
+#  子 shell 环境 / pipe 模式输入（v1.0.21）
+# ──────────────────────────────────────────────
+
+class TestShellEnv:
+    """spawn 子 shell 时的 TERM 兜底。"""
+
+    def test_dumb_term_falls_back(self, monkeypatch):
+        from wsstunnel import client as client_mod
+
+        monkeypatch.setenv("TERM", "dumb")
+        assert client_mod._shell_env()["TERM"] == "xterm-256color"
+
+    def test_missing_term_falls_back(self, monkeypatch):
+        from wsstunnel import client as client_mod
+
+        monkeypatch.delenv("TERM", raising=False)
+        assert client_mod._shell_env()["TERM"] == "xterm-256color"
+
+    def test_good_term_untouched(self, monkeypatch):
+        from wsstunnel import client as client_mod
+
+        monkeypatch.setenv("TERM", "screen-256color")
+        assert client_mod._shell_env()["TERM"] == "screen-256color"
+
+    def test_other_env_preserved(self, monkeypatch):
+        from wsstunnel import client as client_mod
+
+        monkeypatch.setenv("TERM", "dumb")
+        monkeypatch.setenv("WSB_PROBE", "42")
+        assert client_mod._shell_env()["WSB_PROBE"] == "42"
+
+
+class TestPipeModeBinaryInput:
+    """pipe 模式收到二进制帧不得崩掉整条连接。"""
+
+    def test_binary_frame_is_decoded(self, monkeypatch):
+        import threading
+
+        import websocket
+
+        from wsstunnel import client as client_mod
+
+        written = []
+
+        class _Stdin:
+            def write(self, b):
+                written.append(b)
+                return len(b)
+
+            def flush(self):
+                pass
+
+        class _Stdout:
+            def read(self, n):
+                return b""        # 读到 EOF，转发线程立即退出
+
+        class _Proc:
+            pid = 424242
+
+            def __init__(self):
+                self.stdin = _Stdin()
+                self.stdout = _Stdout()
+
+        monkeypatch.setattr(client_mod.subprocess, "Popen", lambda *a, **k: _Proc())
+        monkeypatch.setattr(client_mod, "_terminate_process", lambda *a, **k: None)
+
+        class _WS:
+            def __init__(self):
+                self.calls = 0
+
+            def recv(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return b"echo hi\r"
+                raise websocket.WebSocketConnectionClosedException()
+
+            def send(self, *a, **k):
+                pass
+
+            def close(self):
+                pass
+
+        client_mod._run_pipe_mode(_WS(), "/bin/sh", threading.Event())
+
+        assert written, "命令没有被写进 shell"
+        assert written[0] == b"echo hi\r\n"

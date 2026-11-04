@@ -141,6 +141,24 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 
+def _shell_env() -> dict[str, str]:
+    """返回 spawn 子 shell 时要用的环境。
+
+    ``--daemon`` 起的 client 没有终端，``TERM`` 常常是空或 ``dumb``。这时
+    tmux / vim / htop 会直接报 ``terminal does not support clear`` 或花屏。
+    只在明显不可用时兜底，正常 SSH / 交互式启动完全不受影响。
+
+    Returns:
+        环境变量字典（``os.environ`` 的副本，必要时替换 ``TERM``）。
+    """
+    env = os.environ.copy()
+    term = env.get("TERM", "")
+    if not term or term in ("dumb", "unknown"):
+        logger.info(f"TERM={term!r} 不可用，子 shell 使用 xterm-256color")
+        env["TERM"] = "xterm-256color"
+    return env
+
+
 # 标准信号名称到 signal 模块常量的映射
 _SIGNAL_MAP: dict[str, signal.Signals] = {
     "SIGINT": signal.SIGINT,
@@ -555,6 +573,7 @@ def _run_pty_mode(
             # master 后 PTY 仍被子进程续命、永远不产生 HUP/EIO —— 硬断线
             # （client 被 kill / 网络中断）后 tmux 这类全屏前端收不到 HUP，
             # 变成永久孤儿进程，随重连次数累积。
+            env=_shell_env(),
             preexec_fn=os.setsid,
         )
         os.close(slave_fd)
@@ -705,6 +724,7 @@ def _run_pipe_mode(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        env=_shell_env(),
         bufsize=0,
     )
     _shell_pid = shell_proc.pid
@@ -743,6 +763,11 @@ def _run_pipe_mode(
             cmd = ws.recv()
             if not cmd:
                 break
+            if isinstance(cmd, bytes):
+                # 前端（Web / CLI）的按键走二进制帧；pipe 模式没有 PTY，
+                # 按 UTF-8 文本处理即可。此前直接进 _handle_file_cmd，
+                # str 方法遇到 bytes 抛 TypeError，整条连接被打断重建。
+                cmd = cmd.decode("utf-8", "replace")
             # ── 心跳回包，直接忽略 ──
             if cmd == "__PONG__":
                 continue
