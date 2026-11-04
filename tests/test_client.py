@@ -96,3 +96,61 @@ class TestReconnectBackoff:
     def test_backoff_capped_at_max(self):
         delay = min(5 * (2 ** 100), 300)
         assert delay == 300
+
+
+# ──────────────────────────────────────────────
+#  PTY 子进程 fd 继承（回归：v1.0.20）
+# ──────────────────────────────────────────────
+
+class TestPtyChildFds:
+    """子进程不得继承 PTY master。
+
+    v0.18.x 曾用 ``pass_fds=(master_fd,)`` 把 master 传给 shell，导致
+    "PTY 只可能由父进程关闭"这一前提失效：父进程 ``os.close(master_fd)``
+    之后 PTY 仍被续命，读端永远等不到 HUP/EIO。表现是硬断线后
+    ``tmux -u new-session`` 之类的全屏前端永久滞留（ppid=1、fd0 指向
+    已失效的 /dev/pts/N），随重连次数线性累积。
+    """
+
+    def test_popen_does_not_pass_master_fd(self, monkeypatch):
+        import threading
+
+        import websocket
+
+        from wsstunnel import client as client_mod
+
+        captured = {}
+
+        class _FakePopen:
+            """只记录本次 Popen 的参数，不真正 spawn。"""
+
+            def __init__(self, argv, **kwargs):
+                captured["argv"] = argv
+                captured["kwargs"] = kwargs
+                self.pid = 424242
+
+            def wait(self, timeout=None):
+                return 0
+
+        class _FakeWS:
+            def recv(self):
+                # 只跑一轮主循环：立刻模拟连接断开
+                raise websocket.WebSocketConnectionClosedException()
+
+            def send_binary(self, data):
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(client_mod.subprocess, "Popen", _FakePopen)
+        # 别真的对 424242 发信号
+        monkeypatch.setattr(client_mod, "_terminate_process", lambda *a, **k: None)
+
+        client_mod._run_pty_mode(_FakeWS(), "/bin/sh", threading.Event())
+
+        assert captured, "Popen 未被调用，测试无效"
+        assert "pass_fds" not in captured["kwargs"], (
+            "PTY master 不能传给子进程：master 的副本会让 PTY 在父进程关闭后"
+            "继续存活，断线时前台程序收不到 HUP，变成永久孤儿进程"
+        )

@@ -550,9 +550,11 @@ def _run_pty_mode(
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
-            # 不写 close_fds=False：pass_fds 会隐式强制 close_fds=True，
-            # 两者同写触发 RuntimeWarning "pass_fds overriding close_fds"（P2-1）
-            pass_fds=(master_fd,),
+            # PTY master 只留在父进程：子进程只需要 slave（已 dup 成 0/1/2）。
+            # 曾经用 pass_fds=(master_fd,) 把它传给子进程，导致父进程关闭自己的
+            # master 后 PTY 仍被子进程续命、永远不产生 HUP/EIO —— 硬断线
+            # （client 被 kill / 网络中断）后 tmux 这类全屏前端收不到 HUP，
+            # 变成永久孤儿进程，随重连次数累积。
             preexec_fn=os.setsid,
         )
         os.close(slave_fd)
