@@ -1,0 +1,84 @@
+#!/bin/sh
+# ws-bootstrap —— 给 wsstunnel 的 --shell 钩子：进门先铺路，再进 tmux 持久会话。
+#
+# 用法:
+#   wsstunnel client --server wss://your-vps:443 --token SECRET \
+#       --name mybox --daemon --shell /usr/local/bin/ws-bootstrap
+#
+# 为什么需要它：wsstunnel 的一条连接 = 一个 shell，断开即丢上下文。
+# 把 shell 跑在 tmux 里，会话存在 tmux server 进程里（和 WebSocket 无关），
+# 重连时 `new-session -A` 直接把原来的 pane 接回来 —— cd / 环境变量 /
+# 后台任务 / 滚动缓冲全都还在。核心代码不需要任何改动。
+#
+# 约定（对齐 client.py 的实现）：
+#   1. client.py 固定执行 Popen([shell, "-i"], stdin/stdout/stderr=pty, setsid)
+#      → 本脚本会收到一个多余的 "-i"，第一件事就是丢掉它。
+#   2. --daemon 下 TERM 可能是空或 dumb（>=1.0.21 核心会兜底，这里再兜一层）。
+#   3. 脚本绝不能"跑完就退出"：从端 fd 全关才会产生 PTY EOF，
+#      若脚本退出后没人占着前台，client 会误判 shell 崩溃并进入重启循环。
+#      → 每个分支最后都必须 exec 到一个长期运行的前台进程。
+#   4. 每次重连都会重新执行本脚本 → 必须幂等、快速、每步有超时。
+#   5. 不要 set -e：任何一步失败都该降级继续，而不是让整条连接抖动。
+#
+# 逃生开关:
+#   WSB_NO_TMUX=1   跳过 tmux，直接给裸 shell
+#   WSB_SHELL=...   指定兜底 shell（默认 /bin/bash）
+#   WSB_SESSION=... tmux 会话名（默认 main）
+
+set -u
+
+# ── 1. 丢掉 wsstunnel 传入的 "-i" ────────────────────────────────────
+[ $# -gt 0 ] && shift
+
+# ── 2. 环境兜底（--daemon 继承的是无终端环境）────────────────────────
+case "${TERM:-dumb}" in
+    dumb | "") TERM=xterm-256color ;;
+esac
+export TERM
+
+: "${HOME:=/root}"
+export HOME
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+export LANG="${LANG:-C.UTF-8}"
+
+# tmux 的 default-shell 取 $SHELL；--daemon 下常是 /bin/sh(dash)，
+# 会让 pane 一起退化成 dash（无历史/无作业控制）。
+if [ -z "${WSB_SHELL:-}" ]; then
+    if [ -x /bin/bash ]; then
+        WSB_SHELL=/bin/bash
+    elif [ -x /usr/bin/bash ]; then
+        WSB_SHELL=/usr/bin/bash
+    else
+        WSB_SHELL="${SHELL:-/bin/sh}"
+    fi
+fi
+SHELL="$WSB_SHELL"
+export SHELL
+
+SESSION="${WSB_SESSION:-main}"
+LOG="${WSB_LOG:-${TMPDIR:-/tmp}/ws-bootstrap.log}"
+log() { printf '%s %s\n' "$(date '+%F %T' 2>/dev/null || echo -)" "$*" >>"$LOG" 2>/dev/null; }
+
+log "bootstrap start term=$TERM shell=$SHELL tmux=${TMUX:-none}"
+
+# ── 3. 会话持久化 ────────────────────────────────────────────────────
+# 不用 exec 包 tmux：tmux 退出/服务端被杀时应落回普通 shell，
+# 而不是让 PTY 直接 EOF（那就是重启循环）。
+if [ "${WSB_NO_TMUX:-0}" != "1" ] && [ -z "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    log "entering tmux session '$SESSION'"
+    tmux -u new-session -A -s "$SESSION"
+    _trc=$?
+    log "tmux exited rc=$_trc"
+    if [ "$_trc" -ne 0 ]; then
+        # tmux 起不来 vs 连接已被切断：后者 PTY 已关闭，stty 会失败
+        if command -v stty >/dev/null 2>&1 && ! stty -a </dev/stdin >/dev/null 2>&1; then
+            log "pty gone after disconnect, exiting quietly"
+            exit 0
+        fi
+        printf '\033[2m[bootstrap] tmux 退出异常 (rc=%s)，落回普通 shell\033[0m\r\n' "$_trc"
+    fi
+fi
+
+# ── 4. 兜底：必须是交互式 shell，且必须是前台进程 ────────────────────
+log "exec $WSB_SHELL -i"
+exec "$WSB_SHELL" -i

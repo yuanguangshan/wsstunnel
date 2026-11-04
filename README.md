@@ -340,6 +340,34 @@ wsstunnel relay --port 8080
 wsstunnel client --server ws://your-vps:8080
 ```
 
+### 用 tmux 做会话持久化（推荐）
+
+wsstunnel 的一条连接 = 一个 shell，断开即丢上下文（`cd`、环境变量、后台任务、滚动缓冲全没）。
+想要"重连回到原处"，用 `--shell` 挂一个包装脚本让 shell 跑在 tmux 里即可 —— **核心不需要任何改动**。
+
+仓库里的 `examples/ws-bootstrap` 是可直接用的最小实现：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yuanguangshan/wsstunnel/main/examples/ws-bootstrap \
+  -o /usr/local/bin/ws-bootstrap && chmod +x /usr/local/bin/ws-bootstrap
+
+wsstunnel client --server wss://your-vps:443 --token SECRET \
+    --name mybox --daemon --shell /usr/local/bin/ws-bootstrap
+```
+
+它只做四件事：
+
+1. 丢掉 wsstunnel 固定传入的 `-i`（`Popen([shell, "-i"])` 里那个）；
+2. 修 `TERM` / `SHELL`（`--daemon` 下常是空、`dumb`、`/bin/sh`；≥1.0.21 核心也会兜 `TERM`）；
+3. `tmux new-session -A -s main`：有会话就接回，没有就新建；
+4. tmux 起不来时落回普通 bash，不会让 PTY 直接 EOF 触发重启循环。
+
+会话存在 tmux server 进程里，和 WebSocket 完全无关：连接断了 server 还活着，
+下次连上 `-A` 直接接回同一个 pane，连屏幕内容都在。
+
+> ⚠️ **1.0.20 之前**：子进程会继承 PTY master，硬断线后 tmux 客户端收不到 HUP，
+> 会变成永久孤儿进程（每次重连 +1）。请先升级到 ≥1.0.20。
+
 ## 常见工作流
 
 ### 工作流 A：从零搭建生产隧道
@@ -850,6 +878,7 @@ FileNotFoundError: /bin/bash
 | v1.0.11 | 主悬浮球常态透明度 0.32（按下/展开面板时 0.85），与 ▲/▼ 翻页键风格统一，不再遮挡终端内容 | 仅 Web 终端更新，后端无需升级 |
 | v1.0.12 | 翻页键可视尺寸 40→48px，**热区扩大到 88px 直径**（四周各多 20px）；新增 document 级 touchstart 坐标兜底，微信 X5 吞掉元素事件也能翻页 | 仅 Web 终端更新，后端无需升级 |
 | v1.0.13 | **翻页键真机失效的根因修复**：⌨ 主球此前被 `visualViewport` 顶到"可视区垂直中央"，键盘一弹可视区变矮，正好压在 ▲ 上（z-index 更高），点 ▲ 全被 ⌨ 吃掉。改为 ▲/⌨/▼ 同组 flex 竖排、整组随键盘上移，物理上不可能重叠；节流由全局 300ms 改为每键 180ms（连点不丢）；新增"已到顶部/底部"轻提示（翻不动也有反馈）；面板补回 PgUp/PgDn 冗余入口；xterm CDN 锁 5.3.0 + buffer API 兼容 4.x（未锁版本时 `term.buffer.active` 抛错会静默吞掉点击）；键盘开合重排时保留滚动位置；HTML 响应加 `Cache-Control: no-store` | **必须升级 relay 并强刷页面**（页面由 relay 内嵌分发） |
+| v1.0.21 | **`--daemon` 下的终端环境兜底**：`TERM` 为空或 `dumb` 时给子 shell 补 `xterm-256color`（此前 tmux / vim / htop 会报 `terminal does not support clear` 或花屏）；`--no-pty` 管道模式收到二进制帧不再因 `bytes.startswith(str)` 抛 `TypeError` 而整条连接重建（Web/CLI 前端发的都是二进制按键，该模式此前实际不可用）；新增 `examples/ws-bootstrap` 与 README 的 tmux 会话持久化章节 | **需升级 client**（relay 与 Web 页面无变化） |
 | v1.0.20 | **断线孤儿进程修复**：不再把 PTY master 传给 shell 子进程（移除 `pass_fds=(master_fd,)`）。此前父进程关闭 master 后 PTY 仍被子进程续命、永不产生 HUP/EIO，硬断线（client 被 kill / 网络中断）后 tmux 这类全屏前端会变成永久孤儿进程，随重连次数累积；顺带补一条回归测试 | **需升级 client**（relay 与 Web 页面无变化） |
 | v1.0.19 | **快捷命令默认集扩充**：新增系统状态（uptime / df / free / top / ps / uname）与网络诊断（ss -tlnp / ip addr / 出口 IP / 出网测试 / ping / ss -s）共 12 条，默认列表带版本号，老用户升级后自动合并新命令并保留自己添加的 | 仅 Web 终端更新，需升级 relay 并强刷 |
 | v1.0.18 | **移动端体验三件套**：① 字号 10~24px / 行高 1.0~1.8 可调并自动重新排版；② 会话内容恢复——刷新/切后台被回收后，重连自动回显上次终端内容（最多 500 行，可关闭，关掉即删除）；③ 快捷命令面板——常用命令增删、一键发到 PTY，存 localStorage。顺手修：自动连接与手动点击撞车时会出现两条前端连接 | 仅 Web 终端更新，需升级 relay 并强刷 |
