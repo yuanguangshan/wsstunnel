@@ -750,6 +750,7 @@ async def _forward_binary_to_frontends(
     data: bytes,
     frontend_text_modes: dict[Any, bool],
     tag: str | None = None,
+    only_for: Any = None,
 ) -> None:
     """转发二进制帧给所有前端。
 
@@ -766,6 +767,8 @@ async def _forward_binary_to_frontends(
     text = _strip_ansi(data)  # 清洗一次，避免对每个前端重复计算
 
     async def _send(f: Any) -> None:
+        if only_for is not None and not only_for(f):
+            return
         if frontend_text_modes.get(f):
             if text:
                 await f.send(text)
@@ -1433,10 +1436,20 @@ class RelayState:
                             continue
                         # ── 二进制帧：PTY 原始输出，直接转发 ──
                         if isinstance(message, bytes):
+                            # 只发给「当前 target 就是本后端」的前端。以前是广播，
+                            # 多后端同时在线时每个终端都会混进别人的提示符、
+                            # tmux 状态栏、全屏重绘。
+                            src = actual_name
+
+                            def _watching(f, _src=src):
+                                t = self._resolve_target(f)
+                                return bool(t) and t[0] == _src
+
                             await _forward_binary_to_frontends(
                                 self.frontends, message,
                                 self.frontend_text_modes,
-                                actual_name if len(self.backends) > 1 else None,
+                                src if len(self.backends) > 1 else None,
+                                _watching,
                             )
                             continue
                         # ── 文本帧：文件传输协议消息不加标签 ──

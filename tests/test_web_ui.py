@@ -147,3 +147,13 @@ def test_page_version_matches_project_version(html):
         f"页面版本 v{page_version} 与 pyproject {m2.group(1)} 不一致 —— "
         "真机上是上不了新页面的，务必同步 bump"
     )
+
+
+def test_relay_control_text_not_written_to_terminal():
+    """AUTH_OK / 切换确认是协议控制文本，不能当 shell 输出写进终端。
+
+    真机现象：终端里混着 `AUTH_OK`、`[Info] Switched to backend: xxx(pty)`。
+    """
+    html = HTML_PATH.read_text(encoding="utf-8")
+    assert "if (text.startsWith('[Info] Switched to backend:')) return;" in html
+    assert "text === 'AUTH_OK'" in html

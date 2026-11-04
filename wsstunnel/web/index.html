@@ -495,7 +495,7 @@
   <div class="menu-sep"></div>
   <div class="menu-foot">
     <span>版本</span>
-    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.22</span>
+    <span id="version" title="页面版本（若与仓库版本不符说明浏览器用了缓存）">v1.0.23</span>
   </div>
 </div>
 
@@ -1766,11 +1766,10 @@ function handleRelayText(text) {
     backends = listStr.split(',').map(s => s.trim()).filter(s => s);
     return;  // 静默更新 backends，不写终端
   }
-  // 切换后端确认
-  if (text.startsWith('[Info] Switched to backend:')) {
-    const name = text.split(':').slice(1).join(':').trim().split('(')[0].trim();
-    // 切换确认仅在终端显示
-  }
+  // 切换后端确认：选择器/列表已经体现了，别再往终端里打字
+  if (text.startsWith('[Info] Switched to backend:')) return;
+  // 认证回执与协议帧不是 shell 输出
+  if (text === 'AUTH_OK' || text === 'AUTH_FAIL' || text.startsWith('__')) return;
   // 其他文本回复写入终端
   if (term) term.write(text + '\r\n');
 }

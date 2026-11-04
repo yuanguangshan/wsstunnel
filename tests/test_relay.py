@@ -390,3 +390,40 @@ class TestBroadcastFunctions:
         await _broadcast_backend_list(frontends, backends, modes, targets)
         assert len(ws1.sent) > 0
         assert len(ws2.sent) > 0
+
+# ──────────────────────────────────────────────
+#  多后端输出隔离（v1.0.23）
+# ──────────────────────────────────────────────
+
+class TestBinaryForwardIsolation:
+    """PTY 输出只发给「当前 target 是该后端」的前端。
+
+    之前是广播：多后端同时在线时，每个终端都会混进别人的提示符、
+    tmux 状态栏和全屏重绘（现象：屏幕全是别的机器的 root ~ $）。
+    """
+
+    class _FE:
+        def __init__(self):
+            self.got = []
+
+        async def send(self, d):
+            self.got.append(d)
+
+    async def test_only_for_limits_recipients(self):
+        a, b = self._FE(), self._FE()
+        await _forward_binary_to_frontends(
+            {a, b}, b"OUT", {}, None, lambda f: f is a)
+        assert a.got == [b"OUT"]
+        assert b.got == []
+
+    async def test_without_filter_still_broadcasts(self):
+        a, b = self._FE(), self._FE()
+        await _forward_binary_to_frontends({a, b}, b"OUT", {})
+        assert a.got == [b"OUT"] and b.got == [b"OUT"]
+
+    async def test_text_mode_frontend_gets_stripped_text(self):
+        a, b = self._FE(), self._FE()
+        await _forward_binary_to_frontends(
+            {a, b}, b"\x1b[31mERR\x1b[0m\r\n", {a: True, b: False})
+        assert a.got and "ERR" in a.got[0] and "\x1b" not in a.got[0]
+        assert b.got == [b"\x1b[31mERR\x1b[0m\r\n"]
