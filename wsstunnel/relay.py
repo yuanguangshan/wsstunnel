@@ -550,6 +550,13 @@ async def _http_request_handler(
         return None
     # path 可能包含 query string（如 /wstunnel?token=xxx），需去掉
     clean_path = path.split("?")[0]
+    # 兼容「挂在子路径下」的部署：nginx 常把 /wstunnel 整个前缀反代到 relay 根。
+    # 图标/manifest 必须跟着页面走同一个前缀，否则 start_url 会解析到站点根，
+    # 装出来的 PWA 指到别的应用上（本站根路径就是另一个 PWA）。
+    for _prefix in ("/wstunnel", "/wsstunnel"):
+        if clean_path.startswith(_prefix + "/"):
+            clean_path = clean_path[len(_prefix):]
+            break
     # 背景图代理：不依赖内嵌页面是否加载成功，故放在 _INDEX_HTML 判断之前
     if clean_path == "/api/bg":
         return await _bg_http_response(path, legacy)
