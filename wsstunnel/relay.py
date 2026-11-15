@@ -97,6 +97,43 @@ def _load_index_html() -> bytes | None:
 
 _INDEX_HTML = _load_index_html()
 
+# ──────────────────────────────────────────────
+#  主屏图标 / manifest（PWA）
+# ──────────────────────────────────────────────
+# 为什么必须真的提供这几个文件、而不能像 favicon 那样用 data URI 内联：
+#   · iOS Safari 的 apple-touch-icon 只认 PNG，且必须是可访问的 URL，
+#     data: URI 会被忽略 → 「添加到主屏幕」后图标一直是默认截图；
+#   · Android/Chrome 装 PWA 走 manifest，里面也要真实 PNG 地址。
+# 代价是单文件（只拷 index.html）部署时这几个请求会 404，但页面本身照常，
+# 图标退回默认 —— 这是可接受的降级。
+_WEB_ASSETS_MIME = {
+    "icon-180.png": "image/png",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
+    "manifest.webmanifest": "application/manifest+json",
+}
+
+
+def _load_web_assets() -> dict:
+    """把图标与 manifest 读进内存，随 relay 一起分发（不依赖运行目录）。"""
+    out: dict = {}
+    for name, mime in _WEB_ASSETS_MIME.items():
+        for path in (
+            os.path.join(os.path.dirname(__file__), "web", name),
+            os.path.join(os.getcwd(), "web", name),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", name),
+        ):
+            try:
+                with open(path, "rb") as f:
+                    out["/" + name] = (f.read(), mime)
+                break
+            except FileNotFoundError:
+                continue
+    return out
+
+
+_WEB_ASSETS = _load_web_assets()
+
 # 单帧上限（WebSocket 协议层 max_size）。与 client.py 的 _FILE_CHUNK_SIZE
 # 存在隐式约束：64KB 分块 Base64 后约 87KB，加协议头仍远低于 1MB，当前安全；
 # 若将来调大 _FILE_CHUNK_SIZE，需保证 b64(chunk) + 帧头 < _WS_MAX_FRAME，
@@ -516,6 +553,16 @@ async def _http_request_handler(
     # 背景图代理：不依赖内嵌页面是否加载成功，故放在 _INDEX_HTML 判断之前
     if clean_path == "/api/bg":
         return await _bg_http_response(path, legacy)
+    if clean_path in _WEB_ASSETS:
+        body, mime = _WEB_ASSETS[clean_path]
+        headers = Headers()
+        headers["Content-Type"] = mime
+        # 图标基本不变，给一天缓存；manifest 改了就靠文件名不变 + 短缓存，
+        # 这里统一取 1 小时，避免 iOS 长期拿不到新图标。
+        headers["Cache-Control"] = "public, max-age=3600"
+        if legacy:
+            return (200, headers, body)
+        return Response(200, "OK", headers, body)
     if _INDEX_HTML is None:
         return None
     if clean_path in ("/", "/index.html", "/wstunnel", "/wsstunnel"):
